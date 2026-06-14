@@ -1,0 +1,88 @@
+"%prod":
+  quarkus:
+    websockets-next:
+      server:
+        supported-subprotocols: bearer-token-carrier
+        propagate-subprotocol-headers: true
+        max-message-size: 1024
+        metrics:
+          enabled: true
+        auto-ping-interval: 10s
+
+    datasource:
+      db-kind: postgresql
+      username: ant
+      password: ant
+      jdbc:
+        url: jdbc:postgresql://postgres:5432/hormigasdb
+      reactive:
+        url: postgres://postgres/hormigasdb
+
+    flyway:
+      migrate-at-start: true
+      baseline-on-migrate: true
+      locations:
+        - db/migration
+
+    redis:
+      hosts: redis://redis:6379
+      timeout: 5s
+
+    hibernate-orm:
+      database:
+        generation: update
+      sql-load-script: no-file
+
+    log:
+      level: WARN
+      category:
+        "org.hibernate":
+          level: WARN
+          min-level: WARN
+
+    micrometer:
+      enabled: true
+      export:
+        prometheus:
+          enabled: true
+          path: /q/metrics
+
+  security:
+    keycloak:
+      cert:
+        url: http://keycloak:8080/realms/hormigas/protocol/openid-connect/certs
+      request:
+        rate-limit: 1000
+
+
+  processing:
+    messages:
+      inbound:
+        queue-size: 3000
+      outbound:
+        batch-size: 1500
+        queue-size: 5000
+        polling-ms: "1000ms"
+      feedback:
+        additional-ms: 1000 # for polling-ms
+        adjustment-factor: 0.9
+        recovery-factor: 1.05
+      channel:
+        retry: true
+        max-backoff-ms: 300
+        min-backoff-ms: 1000
+        max-retries: 3
+      credits:
+        max-value: 100
+        refill-rate-per-s: 10
+      collector:
+        max-watermarks: 100
+        every-s: "10s"
+      idempotent:
+        ttl-seconds: 3
+      storage:
+        service: redis
+
+
+
+
