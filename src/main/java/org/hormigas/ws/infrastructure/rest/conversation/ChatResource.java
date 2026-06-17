@@ -12,6 +12,7 @@ import org.hormigas.ws.infrastructure.rest.history.security.TokenVerifier;
 import org.hormigas.ws.infrastructure.security.IdentityHeaders;
 import org.hormigas.ws.ports.history.History;
 import org.hormigas.ws.ports.message.MessageModeration;
+import org.hormigas.ws.ports.message.ReadReceipts;
 
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,9 @@ public class ChatResource {
 
     @Inject
     MessageModeration moderation;
+
+    @Inject
+    ReadReceipts receipts;
 
     public record CreateChatRequest(String clientId, String masterId, Map<String, String> metadata) {}
 
@@ -181,6 +185,44 @@ public class ChatResource {
             if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
             return moderation.freezeConversation(chatId)
                     .map(n -> Response.ok(Map.of("frozen", n)).build());
+        });
+    }
+
+    @POST
+    @Path("/{chatId}/read")
+    public Uni<Response> markRead(
+            @PathParam("chatId") String chatId,
+            @HeaderParam(IdentityHeaders.USER_ID) String userId,
+            @HeaderParam(IdentityHeaders.USER_NAME) String userName,
+            @HeaderParam(IdentityHeaders.USER_ROLE) String role,
+            @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
+        var caller = auth.fromHeaders(userId, userName, role, email);
+        if (caller.isEmpty()) return unauthorized();
+        String meId = caller.get().id();
+        return conversations.findById(chatId).flatMap(conv -> {
+            if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
+            if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
+            // the caller acknowledges the messages addressed to them (UC-U14)
+            return receipts.markRead(chatId, meId)
+                    .map(n -> Response.ok(Map.of("read", n)).build());
+        });
+    }
+
+    @GET
+    @Path("/{chatId}/receipts")
+    public Uni<Response> receipts(
+            @PathParam("chatId") String chatId,
+            @HeaderParam(IdentityHeaders.USER_ID) String userId,
+            @HeaderParam(IdentityHeaders.USER_NAME) String userName,
+            @HeaderParam(IdentityHeaders.USER_ROLE) String role,
+            @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
+        var caller = auth.fromHeaders(userId, userName, role, email);
+        if (caller.isEmpty()) return unauthorized();
+        String meId = caller.get().id();
+        return conversations.findById(chatId).flatMap(conv -> {
+            if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
+            if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
+            return receipts.receipts(chatId).map(list -> Response.ok(list).build());
         });
     }
 
