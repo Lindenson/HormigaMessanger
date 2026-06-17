@@ -22,7 +22,8 @@ import java.util.Map;
 @ApplicationScoped
 public class ConversationPostgresAdapter implements ConversationRepository {
 
-    private static final String COLS = "id, client_id, master_id, metadata_json, created_at, updated_at";
+    private static final String COLS =
+            "id, client_id, master_id, metadata_json, client_blocked, master_blocked, created_at, updated_at";
 
     @Inject
     PgPool client;
@@ -112,6 +113,8 @@ public class ConversationPostgresAdapter implements ConversationRepository {
                 row.getString("client_id"),
                 row.getString("master_id"),
                 fromJson(row.getJsonObject("metadata_json")),
+                row.getBoolean("client_blocked"),
+                row.getBoolean("master_blocked"),
                 row.getOffsetDateTime("created_at").toInstant(),
                 row.getOffsetDateTime("updated_at").toInstant()
         );

@@ -34,7 +34,7 @@ public class ConversationService {
                     Instant now = Instant.now();
                     Conversation fresh = new Conversation(
                             idGenerator.generateId(), clientId, masterId,
-                            metadata != null ? metadata : Map.of(), now, now);
+                            metadata != null ? metadata : Map.of(), false, false, now, now);
                     return repository.insertIfAbsent(fresh)
                             .map(saved -> new CreateResult(saved, true));
                 });
@@ -66,8 +66,27 @@ public class ConversationService {
         });
     }
 
+    /**
+     * Whether {@code senderId} may send into conversation {@code conversationId} right now:
+     * the conversation must exist, the sender must be a participant, and neither side may have
+     * blocked the other (UC-H07 / FR-MSG-01). Enforced on the WS send path.
+     */
+    public Uni<SendCheck> canSend(String conversationId, String senderId) {
+        if (conversationId == null || conversationId.isBlank()) {
+            return Uni.createFrom().item(SendCheck.NO_CONVERSATION);
+        }
+        return repository.findById(conversationId).map(c -> {
+            if (c == null) return SendCheck.NO_CONVERSATION;
+            if (!c.hasParticipant(senderId)) return SendCheck.NOT_MEMBER;
+            if (c.isBlocked()) return SendCheck.BLOCKED;
+            return SendCheck.ALLOW;
+        });
+    }
+
     /** Result of an idempotent create: the chat and whether it was newly created (201 vs 200). */
     public record CreateResult(Conversation conversation, boolean created) {}
 
     public enum Outcome { OK, NOT_FOUND, FORBIDDEN }
+
+    public enum SendCheck { ALLOW, NO_CONVERSATION, NOT_MEMBER, BLOCKED }
 }

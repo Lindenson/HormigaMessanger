@@ -7,9 +7,11 @@ import io.vertx.core.http.HttpClosedException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
+import org.hormigas.ws.core.conversation.ConversationService;
 import org.hormigas.ws.core.credits.ChannelFilter;
 import org.hormigas.ws.core.credits.filter.InboundMessageFilter;
 import org.hormigas.ws.domain.message.Message;
+import org.hormigas.ws.domain.message.MessageType;
 import org.hormigas.ws.domain.session.ClientSession;
 import org.hormigas.ws.domain.validator.ValidationResult;
 import org.hormigas.ws.domain.validator.Validator;
@@ -40,6 +42,9 @@ public class WebsocketService {
 
     @Inject
     Coordinator<WebSocketConnection> coordinator;
+
+    @Inject
+    ConversationService conversations;
 
 
     private final ChannelFilter<Message, WebSocketConnection> channelFilter = new InboundMessageFilter<>();
@@ -79,6 +84,28 @@ public class WebsocketService {
                 return Uni.createFrom().voidItem();
             }
             coordinator.active(connection);
+
+            // Persistent chat: enforce conversation membership + blacklist before accepting.
+            // Trust the authenticated session id as the sender, not the client-supplied field.
+            if (message.getType() == MessageType.CHAT_IN) {
+                final String sender = clientSession.getClientId();
+                return conversations.canSend(message.getConversationId(), sender)
+                        .map(check -> {
+                            if (check == ConversationService.SendCheck.ALLOW) {
+                                incomingPublisher.publish(message);
+                            } else {
+                                log.warn("CHAT message {} rejected ({}) conv={} sender={}",
+                                        message.getMessageId(), check, message.getConversationId(), sender);
+                            }
+                            return (Void) null;
+                        })
+                        .onFailure().recoverWithItem(err -> {
+                            log.error("Conversation guard failed for message {}: {}",
+                                    message.getMessageId(), err.getMessage());
+                            return null;
+                        });
+            }
+
             incomingPublisher.publish(message);
         } catch (Exception e) {
             log.error("Invalid message format: {}", rawJson, e);
