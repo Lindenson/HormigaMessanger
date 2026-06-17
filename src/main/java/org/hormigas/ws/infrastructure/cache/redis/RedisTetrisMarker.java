@@ -156,12 +156,23 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
     @PostConstruct
     void init() {
         try {
-            // Clean all per-recipient keys
-            redis.keys(RECIPIENT_KEY_PREFIX + "*")
-                    .await().indefinitely()
-                    .forEach(k -> redis.del(List.of(k.toString())).await().indefinitely());
+            // Clean all per-recipient keys. SCAN (cursor) instead of KEYS so a large keyspace is
+            // never blocked, and UNLINK in one batch per page instead of a blocking DEL per key.
+            String cursor = "0";
+            do {
+                io.vertx.mutiny.redis.client.Response page = redis.scan(List.of(
+                        cursor, "MATCH", RECIPIENT_KEY_PREFIX + "*", "COUNT", "500"))
+                        .await().indefinitely();
+                cursor = page.get(0).toString();
+                io.vertx.mutiny.redis.client.Response keys = page.get(1);
+                if (keys != null && keys.size() > 0) {
+                    List<String> batch = new ArrayList<>(keys.size());
+                    keys.forEach(k -> batch.add(k.toString()));
+                    redis.unlink(batch).await().indefinitely();
+                }
+            } while (!"0".equals(cursor));
 
-            redis.del(List.of(GLOBAL_MIN_KEY, COUNTS_KEY, LAST_ID_KEY))
+            redis.unlink(List.of(GLOBAL_MIN_KEY, COUNTS_KEY, LAST_ID_KEY))
                     .await().indefinitely();
 
             log.info("Redis Tetris initial cleanup complete");
@@ -200,6 +211,25 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
         return redis.evalsha(full);
     }
 
+    /**
+     * Run a script by its cached SHA, falling back to a full EVAL (which re-caches it) ONLY when
+     * Redis reports NOSCRIPT — e.g. after a Redis restart/FLUSH. The fallback is gated to NOSCRIPT
+     * so a non-idempotent script (onSent's HINCRBY/SET) is never re-run on a transient error.
+     */
+    @SuppressWarnings("unchecked")
+    private Uni<?> evalCached(String sha, String rawScript, List<String> keys, List<String> args) {
+        return ((Uni<Object>) evalSha(sha, keys, args))
+                .onFailure(RedisTetrisMarker::isNoScript)
+                .recoverWithUni(() -> {
+                    log.warn("Tetris script not cached in Redis (NOSCRIPT) — reloading via EVAL");
+                    return (Uni<Object>) eval(rawScript, keys, args);
+                });
+    }
+
+    private static boolean isNoScript(Throwable t) {
+        return t != null && t.getMessage() != null && t.getMessage().contains("NOSCRIPT");
+    }
+
 
     /**
      * ---------------- OPERATIONS -------------------
@@ -225,8 +255,8 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
         long id = message.getId();
         if (rid == null || id <= 0) return Uni.createFrom().item(StageResult.failed());
 
-        return evalSha(
-                LUA_ON_SENT_SHA,
+        return evalCached(
+                LUA_ON_SENT_SHA, LUA_ON_SENT,
                 List.of(recipientKey(rid) + ACKS_SUFFIX, GLOBAL_MIN_KEY, COUNTS_KEY, LAST_ID_KEY),
                 List.of(String.valueOf(id), rid)
         )
@@ -254,8 +284,8 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
         long id = message.getAckId();
         if (rid == null || id <= 0) return Uni.createFrom().item(StageResult.failed());
 
-        return evalSha(
-                LUA_ON_ACK_SHA,
+        return evalCached(
+                LUA_ON_ACK_SHA, LUA_ON_ACK,
                 List.of(recipientKey(rid) + ACKS_SUFFIX, GLOBAL_MIN_KEY, COUNTS_KEY),
                 List.of(String.valueOf(id), rid)
         )
@@ -280,8 +310,8 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
     public Uni<StageResult<Message>> onDisconnect(@NotNull String rid) {
         if (rid == null) return Uni.createFrom().item(StageResult.failed());
 
-        return evalSha(
-                LUA_ON_DISCONNECT_SHA,
+        return evalCached(
+                LUA_ON_DISCONNECT_SHA, LUA_ON_DISCONNECT,
                 List.of(recipientKey(rid) + ACKS_SUFFIX, GLOBAL_MIN_KEY, COUNTS_KEY),
                 List.of(rid)
         )
@@ -320,8 +350,8 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
      */
     @Override
     public Uni<Long> computeGlobalSafeDeleteId() {
-        return evalSha(
-                LUA_COMPUTE_GLOBAL_SHA,
+        return evalCached(
+                LUA_COMPUTE_GLOBAL_SHA, LUA_COMPUTE_GLOBAL,
                 List.of(GLOBAL_MIN_KEY, LAST_ID_KEY),
                 List.of()
         ).map(resp -> {

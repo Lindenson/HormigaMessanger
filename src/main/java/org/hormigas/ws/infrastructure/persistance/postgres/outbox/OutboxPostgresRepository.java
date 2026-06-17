@@ -106,39 +106,32 @@ public class OutboxPostgresRepository implements OutboxRepository {
 
         Interval interval = durationToPgIntervalStrict(leaseDuration);
 
-        String selectSql = """
-            SELECT id FROM outbox
-            WHERE lease_until <= now()
-            ORDER BY id
-            LIMIT $1
-            FOR UPDATE SKIP LOCKED
-            """;
-
-        String updateSql = """
-            UPDATE outbox
+        // Single-statement claim: the CTE picks-and-locks the due rows (SKIP LOCKED for safe
+        // concurrent pollers) and the UPDATE leases them in one round-trip. One statement runs in
+        // its own implicit transaction, so no explicit begin/commit is needed (halves DB round-trips
+        // vs. the previous SELECT-then-UPDATE-in-a-tx).
+        String claimSql = """
+            WITH picked AS (
+                SELECT id FROM outbox
+                WHERE lease_until <= now()
+                ORDER BY id
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE outbox o
             SET lease_until = now() + ($1::interval),
                 processing_attempts = processing_attempts + 1
-            WHERE id = ANY($2)
-            RETURNING id, type,
-                      sender_id, recipient_id, conversation_id, message_id,
-                      correlation_id, sender_ts, sender_tz, server_ts,
-                      payload_json, meta_json, created_at, lease_until
+            FROM picked
+            WHERE o.id = picked.id
+            RETURNING o.id, o.type,
+                      o.sender_id, o.recipient_id, o.conversation_id, o.message_id,
+                      o.correlation_id, o.sender_ts, o.sender_tz, o.server_ts,
+                      o.payload_json, o.meta_json, o.created_at, o.lease_until
             """;
 
         int finalBatchSize = batchSize;
-        return client.withTransaction(conn ->
-                conn.preparedQuery(selectSql).execute(Tuple.of(finalBatchSize))
-                        .flatMap(rows -> {
-                            List<Long> ids = new ArrayList<>();
-                            for (Row r : rows) ids.add(r.getLong("id"));
-
-                            if (ids.isEmpty())
-                                return Uni.createFrom().item(Collections.<OutboxRow>emptyList());
-
-                            Tuple params = Tuple.of(interval, toLongArray(ids));
-
-                            return conn.preparedQuery(updateSql).execute(params)
-                                    .onItem().transform(updated -> {
+        return client.preparedQuery(claimSql).execute(Tuple.of(interval, finalBatchSize))
+                        .onItem().transform(updated -> {
                                         List<OutboxRow> list = new ArrayList<>();
                                         for (Row r : updated) {
                                             list.add(new OutboxRow(
@@ -160,8 +153,6 @@ public class OutboxPostgresRepository implements OutboxRepository {
                                         }
                                         return list;
                                     });
-                        })
-        );
     }
 
     // ----------------------------------------------------------------------
