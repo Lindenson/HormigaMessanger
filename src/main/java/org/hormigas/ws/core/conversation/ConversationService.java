@@ -48,6 +48,26 @@ public class ConversationService {
         return repository.findById(id);
     }
 
+    /** Soft-delete (hide) the chat for the caller; membership-checked. */
+    public Uni<Outcome> hide(String chatId, String userId) {
+        return guarded(chatId, userId, () -> repository.hideFor(chatId, userId));
+    }
+
+    /** Block/unblock the peer for the caller; membership-checked. */
+    public Uni<Outcome> setBlocked(String chatId, String userId, boolean blocked) {
+        return guarded(chatId, userId, () -> repository.setBlocked(chatId, userId, blocked));
+    }
+
+    private Uni<Outcome> guarded(String chatId, String userId, java.util.function.Supplier<Uni<Void>> action) {
+        return repository.findById(chatId).flatMap(c -> {
+            if (c == null) return Uni.createFrom().item(Outcome.NOT_FOUND);
+            if (!c.hasParticipant(userId)) return Uni.createFrom().item(Outcome.FORBIDDEN);
+            return action.get().replaceWith(Outcome.OK);
+        });
+    }
+
     /** Result of an idempotent create: the chat and whether it was newly created (201 vs 200). */
     public record CreateResult(Conversation conversation, boolean created) {}
+
+    public enum Outcome { OK, NOT_FOUND, FORBIDDEN }
 }

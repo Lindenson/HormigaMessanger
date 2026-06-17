@@ -44,15 +44,42 @@ public class ConversationPostgresAdapter implements ConversationRepository {
 
     @Override
     public Uni<List<Conversation>> findByParticipant(String userId) {
-        return client.preparedQuery(
-                        "SELECT " + COLS + " FROM conversation WHERE client_id = $1 OR master_id = $1 "
-                                + "ORDER BY updated_at DESC")
+        return client.preparedQuery("""
+                        SELECT %s FROM conversation
+                         WHERE (client_id = $1 OR master_id = $1)
+                           AND NOT (client_id = $1 AND client_hidden)
+                           AND NOT (master_id = $1 AND master_hidden)
+                         ORDER BY updated_at DESC""".formatted(COLS))
                 .execute(Tuple.of(userId))
                 .map(rs -> {
                     List<Conversation> out = new ArrayList<>();
                     rs.forEach(row -> out.add(map(row)));
                     return out;
                 });
+    }
+
+    @Override
+    public Uni<Void> hideFor(String chatId, String userId) {
+        return client.preparedQuery("""
+                        UPDATE conversation SET
+                            client_hidden = CASE WHEN client_id = $2 THEN TRUE ELSE client_hidden END,
+                            master_hidden = CASE WHEN master_id = $2 THEN TRUE ELSE master_hidden END,
+                            updated_at = now()
+                         WHERE id = $1""")
+                .execute(Tuple.of(chatId, userId))
+                .replaceWithVoid();
+    }
+
+    @Override
+    public Uni<Void> setBlocked(String chatId, String userId, boolean blocked) {
+        return client.preparedQuery("""
+                        UPDATE conversation SET
+                            client_blocked = CASE WHEN client_id = $2 THEN $3 ELSE client_blocked END,
+                            master_blocked = CASE WHEN master_id = $2 THEN $3 ELSE master_blocked END,
+                            updated_at = now()
+                         WHERE id = $1""")
+                .execute(Tuple.of(chatId, userId, blocked))
+                .replaceWithVoid();
     }
 
     @Override
