@@ -3,13 +3,6 @@
     http:
       port: 7777
 
-  security:
-    keycloak:
-      cert:
-        url: http://keycloak:8080/realms/hormigas/protocol/openid-connect/certs
-      request:
-        rate-limit: 1000
-
   processing:
     messages:
       inbound:

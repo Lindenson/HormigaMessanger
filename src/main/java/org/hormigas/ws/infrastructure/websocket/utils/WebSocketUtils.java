@@ -3,10 +3,9 @@ package org.hormigas.ws.infrastructure.websocket.utils;
 import io.quarkus.websockets.next.CloseReason;
 import io.quarkus.websockets.next.WebSocketConnection;
 import io.vertx.core.json.Json;
-import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import org.hormigas.ws.domain.message.Message;
-import org.hormigas.ws.infrastructure.websocket.security.JwtValidator;
+import org.hormigas.ws.infrastructure.security.IdentityHeaders;
 import org.hormigas.ws.domain.credentials.ClientData;
 import org.slf4j.LoggerFactory;
 
@@ -15,12 +14,7 @@ import java.util.Optional;
 @Singleton
 public class WebSocketUtils {
 
-    @Inject
-    JwtValidator jwtValidator;
-
-
-    public static final String AUTHORIZATION = "Authorization";
-    private final static CloseReason closeReason = new CloseReason(1000, "Invalid token");
+    private final static CloseReason closeReason = new CloseReason(1000, "Unauthenticated");
     private static final org.slf4j.Logger log = LoggerFactory.getLogger(WebSocketUtils.class);
 
     public Optional<String> encodeMessage(Message message) {
@@ -32,24 +26,22 @@ public class WebSocketUtils {
         }
     }
 
+    /**
+     * Identity comes from the edge (Ory Oathkeeper) headers on the WS handshake — no token
+     * validation here (the edge already authenticated). Missing identity → close the connection.
+     */
     public Optional<ClientData> getValidatedClientData(WebSocketConnection connection) {
-        String token = connection.handshakeRequest().header(AUTHORIZATION);
-
-        log.debug("Checking token {}", token);
-
-        if (token == null || !token.startsWith("Bearer")) {
+        var req = connection.handshakeRequest();
+        Optional<ClientData> client = IdentityHeaders.fromHeaders(
+                req.header(IdentityHeaders.USER_ID),
+                req.header(IdentityHeaders.USER_NAME),
+                req.header(IdentityHeaders.USER_ROLE),
+                req.header(IdentityHeaders.USER_EMAIL));
+        if (client.isEmpty()) {
+            log.warn("Missing identity headers on WS handshake — closing");
             connection.closeAndAwait(closeReason);
-            log.warn("Empty token");
-            return Optional.empty();
         }
-
-        try {
-            token = token.substring(7);
-        } catch (Exception e) {
-            log.error("Invalid token format: {}", token, e);
-            return Optional.empty();
-        }
-        return jwtValidator.validate(token);
+        return client;
     }
 
     public CloseReason getCloseReason() {

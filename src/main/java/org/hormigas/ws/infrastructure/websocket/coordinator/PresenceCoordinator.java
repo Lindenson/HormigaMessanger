@@ -46,7 +46,7 @@ public class PresenceCoordinator implements Coordinator<WebSocketConnection> {
     public void leave(WebSocketConnection connection) {
         try {
             Optional.ofNullable(registry.deregister(connection))
-                    .map(s -> new ClientData(s.getClientId(), s.getClientName()))
+                    .map(s -> new ClientData(s.getClientId(), s.getClientName(), null, null))
                     .ifPresent(client -> {
                         watermark.remove(client.id());
                         publisher.publishLeave(client);

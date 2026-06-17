@@ -2,8 +2,6 @@
   quarkus:
     websockets-next:
       server:
-        supported-subprotocols: bearer-token-carrier
-        propagate-subprotocol-headers: true
         max-message-size: 1024
         metrics:
           enabled: true
@@ -46,13 +44,6 @@
         prometheus:
           enabled: true
           path: /q/metrics
-
-  security:
-    keycloak:
-      cert:
-        url: http://keycloak:8080/realms/hormigas/protocol/openid-connect/certs
-      request:
-        rate-limit: 1000
 
 
   processing:
