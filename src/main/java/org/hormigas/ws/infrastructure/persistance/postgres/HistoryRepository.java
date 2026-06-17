@@ -41,6 +41,11 @@ public interface HistoryRepository {
     Uni<List<HistoryRow>> findAllByConversationId(String conversationId);
 
     // ----------------------------------------------------------------------
+    // findByConversationSince — a page after sinceMessageId (null = from start), capped at limit.
+    // ----------------------------------------------------------------------
+    Uni<List<HistoryRow>> findByConversationSince(String conversationId, String sinceMessageId, int limit);
+
+    // ----------------------------------------------------------------------
     // findAllBySenderId
     // ----------------------------------------------------------------------
     Uni<List<HistoryRow>> findAllBySenderId(String senderId);

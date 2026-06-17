@@ -147,6 +147,24 @@ public class HistoryPostgresAdapter implements History<Message> {
     }
 
     // ----------------------------------------------------------------------
+    // Fetch a page of a conversation after a cursor (oldest-first) — incremental sync (UC-U50)
+    // ----------------------------------------------------------------------
+    @Override
+    public Uni<List<Message>> getByConversation(String conversationId, String sinceMessageId, int limit) {
+        if (conversationId == null) return Uni.createFrom().item(List.of());
+
+        return repository.findByConversationSince(conversationId, sinceMessageId, limit)
+                .onItem().transform(rows -> rows.stream()
+                        .map(mapper::fromHistoryRow)
+                        .filter(m -> m != null && m.getPayload() != null)
+                        .toList())
+                .onFailure().recoverWithItem(er -> {
+                    log.error("Error paging history for conversationId {}: {}", conversationId, er.getMessage(), er);
+                    return List.of();
+                });
+    }
+
+    // ----------------------------------------------------------------------
     // Insert a single message into history (fire-and-forget)
     // ----------------------------------------------------------------------
     @Override

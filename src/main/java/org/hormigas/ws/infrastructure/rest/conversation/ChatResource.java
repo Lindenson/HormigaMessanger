@@ -81,10 +81,17 @@ public class ChatResource {
                 .map(list -> Response.ok(list).build());
     }
 
+    /** Default page size for history sync when the caller doesn't specify one. */
+    static final int DEFAULT_HISTORY_LIMIT = 200;
+    /** Hard cap so a caller can't request an unbounded page. */
+    static final int MAX_HISTORY_LIMIT = 500;
+
     @GET
     @Path("/{chatId}/messages")
     public Uni<Response> messages(
             @PathParam("chatId") String chatId,
+            @QueryParam("since") String since,
+            @QueryParam("limit") Integer limit,
             @HeaderParam(IdentityHeaders.USER_ID) String userId,
             @HeaderParam(IdentityHeaders.USER_NAME) String userName,
             @HeaderParam(IdentityHeaders.USER_ROLE) String role,
@@ -95,6 +102,7 @@ public class ChatResource {
             return unauthorized();
         }
         ClientData me = caller.get();
+        int pageSize = limit == null ? DEFAULT_HISTORY_LIMIT : Math.min(Math.max(1, limit), MAX_HISTORY_LIMIT);
         return conversations.findById(chatId)
                 .flatMap(conv -> {
                     if (conv == null) {
@@ -103,8 +111,9 @@ public class ChatResource {
                     if (!conv.hasParticipant(me.id())) {
                         return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
                     }
-                    // Conversation-scoped history sync (UC-U50 / reconnect durability).
-                    return history.getByConversation(chatId)
+                    // Conversation-scoped, cursor-paginated history sync (UC-U50 / reconnect durability):
+                    // ?since=<last messageId> (exclusive) &limit=<n>. Defaults: from start, DEFAULT_HISTORY_LIMIT.
+                    return history.getByConversation(chatId, since, pageSize)
                             .map(messages -> Response.ok(messages).build());
                 });
     }

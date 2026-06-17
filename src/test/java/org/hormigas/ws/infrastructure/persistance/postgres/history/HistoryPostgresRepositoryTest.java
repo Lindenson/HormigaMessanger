@@ -144,6 +144,26 @@ public class HistoryPostgresRepositoryTest {
     }
 
     @Test
+    public void testFindByConversationSince_cursorAndLimit() {
+        // ULID-like monotonic ids; ORDER BY message_id ASC, cursor is exclusive
+        repo.insertHistoryBatch(List.of(
+                sample("m-001", "conv-1", "s1", "r1", 1),
+                sample("m-002", "conv-1", "s1", "r1", 2),
+                sample("m-003", "conv-1", "s1", "r1", 3))).await().indefinitely();
+
+        // from the start, capped at 2
+        List<HistoryRow> firstPage = repo.findByConversationSince("conv-1", null, 2).await().indefinitely();
+        assertEquals(2, firstPage.size());
+        assertEquals("m-001", firstPage.get(0).messageId());
+        assertEquals("m-002", firstPage.get(1).messageId());
+
+        // next page after the last seen cursor
+        List<HistoryRow> nextPage = repo.findByConversationSince("conv-1", "m-002", 10).await().indefinitely();
+        assertEquals(1, nextPage.size());
+        assertEquals("m-003", nextPage.get(0).messageId());
+    }
+
+    @Test
     public void testFindAllByConversationId() {
         HistoryRow h1 = sample("msg-1", "conv-1", "s1", "r1", 1);
         HistoryRow h2 = sample("msg-2", "conv-2", "s2", "r2", 2);
