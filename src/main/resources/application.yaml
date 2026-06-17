@@ -2,7 +2,7 @@
   quarkus:
     websockets-next:
       server:
-        max-message-size: 1024
+        max-message-size: 65536
         metrics:
           enabled: true
         auto-ping-interval: 10s
@@ -70,7 +70,7 @@
         max-watermarks: 100
         every-s: "10s"
       idempotent:
-        ttl-seconds: 3
+        ttl-seconds: 30
       storage:
         service: redis
 
