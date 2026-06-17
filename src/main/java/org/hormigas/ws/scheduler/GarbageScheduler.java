@@ -15,7 +15,7 @@ public class GarbageScheduler {
     @Inject
     AsyncGarbageCollector collector;
 
-    @Scheduled(every = "{processing.messages.collector.every-s}",
+    @Scheduled(every = "${processing.messages.collector.every-s}",
     concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void run() {
         collector.collect();
