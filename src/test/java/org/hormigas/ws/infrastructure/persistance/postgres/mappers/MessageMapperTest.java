@@ -91,8 +91,22 @@ class MessageMapperFullTest {
         assertEquals("conv-1", row.conversationId());
         assertEquals("s", row.senderId());
         assertEquals("r", row.recipientId());
+        assertNull(row.orderId()); // no order metadata → null
         assertNotNull(row.payloadJson());
         assertNotNull(row.createdAt());
+    }
+
+    @Test
+    void toHistoryRow_extractsOrderIdFromMeta() {
+        Message msg = Message.builder()
+                .senderId("s").recipientId("r").conversationId("conv-1").messageId("m1")
+                .meta(java.util.Map.of(Message.META_ORDER_ID, "order-42", "other", "x"))
+                .build();
+
+        HistoryRow row = mapper.toHistoryRow(msg);
+
+        // only the sanctioned orderId key is lifted into the queryable column (UC-U22 scoping)
+        assertEquals("order-42", row.orderId());
     }
 
     // -----------------------------------------
@@ -165,7 +179,7 @@ class MessageMapperFullTest {
     void fromHistoryRow_validJson() {
         Message msg = Message.builder()
                 .senderId("s").recipientId("r").conversationId("conv-1").messageId("m1").build();
-        HistoryRow row = new HistoryRow("m1", "conv-1", "s", "r",
+        HistoryRow row = new HistoryRow("m1", "conv-1", "s", "r", null,
                 mapper.serialize(msg), Instant.now());
 
         Message result = mapper.fromHistoryRow(row);

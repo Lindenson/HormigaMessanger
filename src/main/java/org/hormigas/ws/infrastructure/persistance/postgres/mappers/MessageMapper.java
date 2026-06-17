@@ -68,11 +68,14 @@ public class MessageMapper implements OutboxMapper {
     public HistoryRow toHistoryRow(@Nullable Message msg) {
         if (msg == null) return null;
 
+        final String orderId = msg.getMeta() == null ? null : msg.getMeta().get(Message.META_ORDER_ID);
+
         return new HistoryRow(
                 msg.getMessageId(),
                 msg.getConversationId(),
                 msg.getSenderId(),
                 msg.getRecipientId(),
+                orderId,
                 serialize(msg),
                 Instant.now()
         );

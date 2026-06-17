@@ -36,10 +36,10 @@ public class MessageModerationAdapter implements MessageModeration {
     }
 
     @Override
-    public Uni<Integer> freezeConversation(String conversationId) {
+    public Uni<Integer> freezeByOrder(String conversationId, String orderId) {
         return client.preparedQuery(
-                        "UPDATE message_history SET frozen = TRUE WHERE conversation_id = $1 AND frozen = FALSE")
-                .execute(Tuple.of(conversationId))
+                        "UPDATE message_history SET frozen = TRUE WHERE conversation_id = $1 AND order_id = $2 AND frozen = FALSE")
+                .execute(Tuple.of(conversationId, orderId))
                 .map(r -> r.rowCount());
     }
 }

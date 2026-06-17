@@ -40,13 +40,18 @@ public class HistoryPostgresRepositoryTest {
                     sender_id VARCHAR(128) NOT NULL,
                     recipient_id VARCHAR(128) NOT NULL,
                     payload_json JSONB NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT now() NOT NULL
+                    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+                    order_id VARCHAR(128)
                 );
                 CREATE INDEX IF NOT EXISTS idx_message_history_message_id ON message_history(message_id);
                 CREATE INDEX IF NOT EXISTS idx_message_history_conversation_id ON message_history(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_message_history_sender_id ON message_history(sender_id);
                 CREATE INDEX IF NOT EXISTS idx_message_history_recipient_id ON message_history(recipient_id);
                 """).execute().await().indefinitely();
+        // Shared Dev Services DB: another @QuarkusTest may have created the table first without
+        // order_id — ensure it exists regardless of test order.
+        client.query("ALTER TABLE message_history ADD COLUMN IF NOT EXISTS order_id VARCHAR(128)")
+                .execute().await().indefinitely();
     }
 
     @BeforeEach
@@ -56,7 +61,7 @@ public class HistoryPostgresRepositoryTest {
 
     private HistoryRow sample(String messageId, String conversationId, String senderId, String recipientId, int idx) {
         String payload = "{\"kind\":\"text\",\"body\":\"hello " + idx + "\"}";
-        return new HistoryRow(messageId, conversationId, senderId, recipientId, payload, Instant.now());
+        return new HistoryRow(messageId, conversationId, senderId, recipientId, null, payload, Instant.now());
     }
 
     @Test

@@ -7,6 +7,7 @@ public record HistoryRow(
         String conversationId,
         String senderId,
         String recipientId,
+        String orderId,
         String payloadJson,
         Instant createdAt
 ) {}

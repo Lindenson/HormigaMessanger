@@ -181,7 +181,7 @@ public class OutboxPostgresRepository implements OutboxRepository {
                 StringBuilder hsql = new StringBuilder("""
                     INSERT INTO message_history
                     (message_id, conversation_id, sender_id, recipient_id,
-                     payload_json, created_at)
+                     order_id, payload_json, created_at)
                     VALUES
                     """);
 
@@ -199,14 +199,16 @@ public class OutboxPostgresRepository implements OutboxRepository {
                             .append("$").append(p + 1).append(",") // conversation_id
                             .append("$").append(p + 2).append(",") // sender_id
                             .append("$").append(p + 3).append(",") // recipient_id
-                            .append("$").append(p + 4).append("::jsonb,") // payload_json
-                            .append("$").append(p + 5)             // created_at
+                            .append("$").append(p + 4).append(",") // order_id
+                            .append("$").append(p + 5).append("::jsonb,") // payload_json
+                            .append("$").append(p + 6)             // created_at
                             .append(")");
 
                     flat.add(h.messageId());
                     flat.add(h.conversationId());
                     flat.add(h.senderId());
                     flat.add(h.recipientId());
+                    flat.add(h.orderId());
                     flat.add(h.payloadJson());
                     flat.add(h.createdAt().atOffset(ZoneOffset.UTC));
                 }

@@ -85,30 +85,50 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     Then status 200
     And match response[*].messageId !contains mid
 
-  Scenario: UC-U22 — frozen messages cannot be deleted (409)
+  Scenario: UC-U22 — freeze is message-level scoped by orderId; frozen messages cannot be deleted (409)
+    # two orders in the SAME (order-agnostic) chat — a contract on orderA must not freeze orderB
+    * def orderA = 'order-A-' + uid
+    * def orderB = 'order-B-' + uid
     * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
     * def clientSock = karate.webSocket(wsUrl, null, { headers: cHdr })
     * eval java.lang.Thread.sleep(1200)
     * def now = java.lang.System.currentTimeMillis()
-    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"frz-' + uid + '"}}'
-    * masterSock.send(msg)
+    * def msgA = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"a-' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"frzA-' + uid + '"},"meta":{"orderId":"' + orderA + '"}}'
+    * def msgB = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"b-' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"frzB-' + uid + '"},"meta":{"orderId":"' + orderB + '"}}'
+    * masterSock.send(msgA)
+    * masterSock.send(msgB)
     * eval java.lang.Thread.sleep(1500)
+    # freeze requires an orderId — a freeze with no order is a bad request (no chat-wide freeze)
+    Given path '/api/chats', convId, 'freeze'
+    And headers cHdr
+    And request {}
+    When method POST
+    Then status 400
+    # freeze only orderA's messages (contract reached for that order) — exactly one frozen
+    Given path '/api/chats', convId, 'freeze'
+    And headers cHdr
+    And request { orderId: '#(orderA)' }
+    When method POST
+    Then status 200
+    And match response.frozen == 1
+    # resolve the server-assigned messageIds (the server reassigns ids; we match by body)
     Given path '/api/chats', convId, 'messages'
     And headers cHdr
     When method GET
     Then status 200
-    * def mid = response[0].messageId
-    # freeze the conversation (contract reached) — REST adapter of the freeze use case
-    Given path '/api/chats', convId, 'freeze'
-    And headers cHdr
-    When method POST
-    Then status 200
-    And match response.frozen == '#? _ >= 1'
-    # delete is now rejected (immutable history)
-    Given path '/api/chats', convId, 'messages', mid
+    * def midOf = function(body){ return karate.jsonPath(response, "$[?(@.payload.body=='" + body + "')].messageId")[0] }
+    * def aMid = midOf('frzA-' + uid)
+    * def bMid = midOf('frzB-' + uid)
+    # orderA message delete is now rejected (immutable history)
+    Given path '/api/chats', convId, 'messages', aMid
     And headers cHdr
     When method DELETE
     Then status 409
+    # orderB message in the SAME chat is untouched — still deletable
+    Given path '/api/chats', convId, 'messages', bMid
+    And headers cHdr
+    When method DELETE
+    Then status 204
 
   Scenario: UC-U13/U14 — recipient marks messages READ; status reads back and the mark is idempotent
     * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
