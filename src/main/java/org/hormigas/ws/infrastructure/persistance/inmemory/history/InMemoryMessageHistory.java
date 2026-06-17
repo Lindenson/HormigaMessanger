@@ -51,6 +51,20 @@ public class InMemoryMessageHistory implements History<Message> {
     }
 
 
+    @Override
+    public Uni<List<Message>> getByConversation(String conversationId) {
+        if (conversationId == null) return Uni.createFrom().item(List.of());
+        java.util.LinkedHashMap<String, Message> byId = new java.util.LinkedHashMap<>();
+        java.util.stream.Stream.concat(receivedStorage.values().stream(), sentStorage.values().stream())
+                .flatMap(Deque::stream)
+                .map(MessageRecord::message)
+                .filter(m -> m != null && conversationId.equals(m.getConversationId()))
+                .forEach(m -> byId.putIfAbsent(m.getMessageId(), m));
+        List<Message> out = new ArrayList<>(byId.values());
+        out.sort(java.util.Comparator.comparingLong(Message::getSenderTimestamp));
+        return Uni.createFrom().item(out);
+    }
+
     private List<Message> getMessagesFromDeque(Deque<MessageRecord> deque) {
         if (deque == null) return List.of();
         cleanupClientHistory(deque);

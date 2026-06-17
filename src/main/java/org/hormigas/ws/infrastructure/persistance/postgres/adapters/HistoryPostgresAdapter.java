@@ -129,6 +129,24 @@ public class HistoryPostgresAdapter implements History<Message> {
     }
 
     // ----------------------------------------------------------------------
+    // Fetch a whole conversation (oldest-first) — reconnect/history sync (UC-U50)
+    // ----------------------------------------------------------------------
+    @Override
+    public Uni<List<Message>> getByConversation(String conversationId) {
+        if (conversationId == null) return Uni.createFrom().item(List.of());
+
+        return repository.findAllByConversationId(conversationId)
+                .onItem().transform(rows -> rows.stream()
+                        .map(mapper::fromHistoryRow)
+                        .filter(m -> m != null && m.getPayload() != null)
+                        .toList())
+                .onFailure().recoverWithItem(er -> {
+                    log.error("Error fetching history for conversationId {}: {}", conversationId, er.getMessage(), er);
+                    return List.of();
+                });
+    }
+
+    // ----------------------------------------------------------------------
     // Insert a single message into history (fire-and-forget)
     // ----------------------------------------------------------------------
     @Override
