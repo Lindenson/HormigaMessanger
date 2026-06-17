@@ -71,6 +71,21 @@ class ReadReceiptsAdapterTest {
     }
 
     @Test
+    void markDelivered_moves_SENT_to_DELIVERED_and_never_downgrades_READ() {
+        insert("conv", "m1", "master", "client"); // SENT
+        assertEquals(1, adapter.markDelivered("m1").await().indefinitely());
+        assertEquals("DELIVERED",
+                adapter.receipts("conv").await().indefinitely().get(0).status());
+        // already DELIVERED → no re-count
+        assertEquals(0, adapter.markDelivered("m1").await().indefinitely());
+        // once READ, a late delivery mark must not downgrade it
+        adapter.markRead("conv", "client").await().indefinitely();
+        assertEquals(0, adapter.markDelivered("m1").await().indefinitely());
+        assertEquals("READ",
+                adapter.receipts("conv").await().indefinitely().get(0).status());
+    }
+
+    @Test
     void markRead_is_idempotent() {
         insert("conv", "m1", "master", "client");
         assertEquals(1, adapter.markRead("conv", "client").await().indefinitely());

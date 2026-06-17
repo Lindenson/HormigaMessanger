@@ -11,6 +11,13 @@ import java.util.List;
  */
 public interface ReadReceipts {
 
+    /**
+     * Mark a message DELIVERED once it has been pushed to the online recipient (UC-U13, decision #2:
+     * DELIVERED on delivery). Guarded SENT→DELIVERED only, so it never downgrades a message already READ.
+     * Returns the count newly marked (0 if not found or already DELIVERED/READ).
+     */
+    Uni<Integer> markDelivered(String messageId);
+
     /** Mark all messages addressed to {@code readerId} in the conversation as READ; returns the count newly marked. */
     Uni<Integer> markRead(String conversationId, String readerId);
 
