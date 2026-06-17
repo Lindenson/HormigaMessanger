@@ -59,6 +59,57 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     * match acks[*].type contains 'CHAT_ACK'
     * match acks[*].correlationId contains uid
 
+  Scenario: UC-U21 — a participant can delete a non-frozen message
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * def clientSock = karate.webSocket(wsUrl, null, { headers: cHdr })
+    * eval java.lang.Thread.sleep(1200)
+    * def now = java.lang.System.currentTimeMillis()
+    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"del-' + uid + '"}}'
+    * masterSock.send(msg)
+    * eval java.lang.Thread.sleep(1500)
+    # find the persisted message's server id, delete it
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    When method GET
+    Then status 200
+    And match response == '#[_ > 0]'
+    * def mid = response[0].messageId
+    Given path '/api/chats', convId, 'messages', mid
+    And headers cHdr
+    When method DELETE
+    Then status 204
+    # gone from history
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    When method GET
+    Then status 200
+    And match response[*].messageId !contains mid
+
+  Scenario: UC-U22 — frozen messages cannot be deleted (409)
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * def clientSock = karate.webSocket(wsUrl, null, { headers: cHdr })
+    * eval java.lang.Thread.sleep(1200)
+    * def now = java.lang.System.currentTimeMillis()
+    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"frz-' + uid + '"}}'
+    * masterSock.send(msg)
+    * eval java.lang.Thread.sleep(1500)
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    When method GET
+    Then status 200
+    * def mid = response[0].messageId
+    # freeze the conversation (contract reached) — REST adapter of the freeze use case
+    Given path '/api/chats', convId, 'freeze'
+    And headers cHdr
+    When method POST
+    Then status 200
+    And match response.frozen == '#? _ >= 1'
+    # delete is now rejected (immutable history)
+    Given path '/api/chats', convId, 'messages', mid
+    And headers cHdr
+    When method DELETE
+    Then status 409
+
   Scenario: UC-U50/U12 — a sent message is durable and retrievable via conversation history
     * def body = 'persist-' + uid
     * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
