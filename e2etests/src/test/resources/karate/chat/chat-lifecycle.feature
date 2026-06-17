@@ -1,39 +1,50 @@
-@chat @wip
-Feature: Chat lifecycle (UC-U01, UC-U02, UC-H02) — SPEC, not yet implemented
+@chat
+Feature: Chat lifecycle (UC-U01, UC-U02, UC-H02)
 
-  # ATDD spec: these drive M-2 (domain remodel) + the universal create-chat use case.
-  # Tagged @wip → excluded from the default green run; drop the tag as each goes green.
+  # M-2 first slice: universal idempotent create-chat (REST adapter), list, membership authz.
+  # Unique pair per scenario so the run is independent of pre-existing data.
 
   Background:
     * url baseUrl
+    * def uid = java.util.UUID.randomUUID() + ''
+    * def c = 'client-' + uid
+    * def m = 'master-' + uid
 
   Scenario: UC-U01 / UC-H02 — create a chat via REST is idempotent
-    # Universal create: REST adapter over the core CreateChat use case.
     Given path '/api/chats'
     And headers masterHeaders()
-    And request { clientId: '#(clientId)', masterId: '#(masterId)', metadata: { orderId: 'order-123' } }
+    And request { clientId: '#(c)', masterId: '#(m)', metadata: { orderId: 'order-123' } }
     When method POST
     Then status 201
     * def chatId = response.id
-    # same pair again → same chat, no duplicate (idempotent)
+    And match response.clientId == c
+    And match response.masterId == m
+    # same pair again → same chat, no duplicate (idempotent), 200 not 201
     Given path '/api/chats'
     And headers masterHeaders()
-    And request { clientId: '#(clientId)', masterId: '#(masterId)', metadata: { orderId: 'order-456' } }
+    And request { clientId: '#(c)', masterId: '#(m)', metadata: { orderId: 'order-456' } }
     When method POST
     Then status 200
     And match response.id == chatId
 
   Scenario: UC-U03 — a participant lists their chats
+    # create a chat for this client, then list as that client
     Given path '/api/chats'
-    And headers clientHeaders()
+    And headers masterHeaders()
+    And request { clientId: '#(c)', masterId: '#(m)', metadata: {} }
+    When method POST
+    Then status 201
+    Given path '/api/chats'
+    And headers idHeaders(c, 'C', 'CLIENT', 'c@test.com')
     When method GET
     Then status 200
-    And match response == '#array'
+    And match response[*].id contains '#? _ != null'
+    And match response[*].clientId contains c
 
   Scenario: UC-U61 — a non-participant cannot read a chat (403)
     Given path '/api/chats'
     And headers masterHeaders()
-    And request { clientId: '#(clientId)', masterId: '#(masterId)', metadata: {} }
+    And request { clientId: '#(c)', masterId: '#(m)', metadata: {} }
     When method POST
     Then status 201
     * def chatId = response.id
