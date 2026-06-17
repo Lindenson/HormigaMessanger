@@ -16,7 +16,7 @@ public interface ConversationRepository {
     /** A conversation by id, or {@code null}. */
     Uni<Conversation> findById(String id);
 
-    /** All conversations the given identity participates in (most-recent activity first). */
+    /** Conversations the identity participates in and has NOT soft-deleted, most-recent first. */
     Uni<List<Conversation>> findByParticipant(String userId);
 
     /**
@@ -24,4 +24,10 @@ public interface ConversationRepository {
      * the existing row is returned instead of creating a duplicate.
      */
     Uni<Conversation> insertIfAbsent(Conversation conversation);
+
+    /** Soft-delete (hide) the conversation for the given participant only. */
+    Uni<Void> hideFor(String chatId, String userId);
+
+    /** Set the block flag for the given participant's side. */
+    Uni<Void> setBlocked(String chatId, String userId, boolean blocked);
 }

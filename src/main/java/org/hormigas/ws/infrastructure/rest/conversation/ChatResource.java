@@ -93,6 +93,53 @@ public class ChatResource {
                 });
     }
 
+    @DELETE
+    @Path("/{chatId}")
+    public Uni<Response> softDelete(
+            @PathParam("chatId") String chatId,
+            @HeaderParam(IdentityHeaders.USER_ID) String userId,
+            @HeaderParam(IdentityHeaders.USER_NAME) String userName,
+            @HeaderParam(IdentityHeaders.USER_ROLE) String role,
+            @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
+        var caller = auth.fromHeaders(userId, userName, role, email);
+        if (caller.isEmpty()) return unauthorized();
+        return conversations.hide(chatId, caller.get().id()).map(this::toResponse);
+    }
+
+    @POST
+    @Path("/{chatId}/block")
+    public Uni<Response> block(
+            @PathParam("chatId") String chatId,
+            @HeaderParam(IdentityHeaders.USER_ID) String userId,
+            @HeaderParam(IdentityHeaders.USER_NAME) String userName,
+            @HeaderParam(IdentityHeaders.USER_ROLE) String role,
+            @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
+        var caller = auth.fromHeaders(userId, userName, role, email);
+        if (caller.isEmpty()) return unauthorized();
+        return conversations.setBlocked(chatId, caller.get().id(), true).map(this::toResponse);
+    }
+
+    @DELETE
+    @Path("/{chatId}/block")
+    public Uni<Response> unblock(
+            @PathParam("chatId") String chatId,
+            @HeaderParam(IdentityHeaders.USER_ID) String userId,
+            @HeaderParam(IdentityHeaders.USER_NAME) String userName,
+            @HeaderParam(IdentityHeaders.USER_ROLE) String role,
+            @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
+        var caller = auth.fromHeaders(userId, userName, role, email);
+        if (caller.isEmpty()) return unauthorized();
+        return conversations.setBlocked(chatId, caller.get().id(), false).map(this::toResponse);
+    }
+
+    private Response toResponse(ConversationService.Outcome outcome) {
+        return switch (outcome) {
+            case OK -> Response.noContent().build();
+            case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();
+            case FORBIDDEN -> Response.status(Response.Status.FORBIDDEN).build();
+        };
+    }
+
     private Uni<Response> unauthorized() {
         return Uni.createFrom().item(Response.status(Response.Status.UNAUTHORIZED).build());
     }
