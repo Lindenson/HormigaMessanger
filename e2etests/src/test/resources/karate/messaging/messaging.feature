@@ -110,6 +110,34 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     When method DELETE
     Then status 409
 
+  Scenario: UC-U13/U14 — recipient marks messages READ; status reads back and the mark is idempotent
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * def clientSock = karate.webSocket(wsUrl, null, { headers: cHdr })
+    * eval java.lang.Thread.sleep(1200)
+    * def now = java.lang.System.currentTimeMillis()
+    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"read-' + uid + '"}}'
+    * masterSock.send(msg)
+    # let History persist before the recipient acknowledges
+    * eval java.lang.Thread.sleep(1500)
+    # the recipient (client) acknowledges — exactly one message addressed to them is marked READ
+    Given path '/api/chats', convId, 'read'
+    And headers cHdr
+    When method POST
+    Then status 200
+    And match response.read == 1
+    # per-message status reads back as READ
+    Given path '/api/chats', convId, 'receipts'
+    And headers cHdr
+    When method GET
+    Then status 200
+    And match response[*].status contains 'READ'
+    # acknowledging again is idempotent — nothing new to mark
+    Given path '/api/chats', convId, 'read'
+    And headers cHdr
+    When method POST
+    Then status 200
+    And match response.read == 0
+
   Scenario: UC-U50/U12 — a sent message is durable and retrievable via conversation history
     * def body = 'persist-' + uid
     * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
