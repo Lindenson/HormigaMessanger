@@ -14,6 +14,11 @@ import java.util.Map;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonDeserialize(builder = Message.MessageBuilder.class)
 public class Message {
+
+    /** Sanctioned metadata key: the opaque order reference (UC-H03). The messenger forwards all
+     *  metadata uninterpreted, but extracts this one key to scope message-level freeze (UC-U22). */
+    public static final String META_ORDER_ID = "orderId";
+
     @Builder.Default
     @With
     Long id = -1L;

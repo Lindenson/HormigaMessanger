@@ -44,8 +44,8 @@ class HistoryPostgresAdapterTest {
 
     @Test
     void getByRecipientId_validClient_returnsMappedMessages() {
-        HistoryRow row1 = new HistoryRow("m1", "c1", "s1", "r1", "{}", Instant.now());
-        HistoryRow row2 = new HistoryRow("m2", "c2", "s2", "r2", "{}", Instant.now());
+        HistoryRow row1 = new HistoryRow("m1", "c1", "s1", "r1", null, "{}", Instant.now());
+        HistoryRow row2 = new HistoryRow("m2", "c2", "s2", "r2", null, "{}", Instant.now());
         Message msg1 = Message.builder().messageId("m1").payload(new Message.Payload()).build();
         Message msg2 = Message.builder().messageId("m2").payload(new Message.Payload()).build();
 
@@ -62,7 +62,7 @@ class HistoryPostgresAdapterTest {
 
     @Test
     void getByRecipientId_mapperReturnsNull_filtersOut() {
-        HistoryRow row1 = new HistoryRow("m1", "c1", "s1", "r1", "{}", Instant.now());
+        HistoryRow row1 = new HistoryRow("m1", "c1", "s1", "r1", null, "{}", Instant.now());
         when(repository.findAllByRecipientId("r1")).thenReturn(Uni.createFrom().item(List.of(row1)));
         when(mapper.fromHistoryRow(row1)).thenReturn(null);
 
@@ -87,7 +87,7 @@ class HistoryPostgresAdapterTest {
 
     @Test
     void getBySenderId_successful() {
-        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", "{}", Instant.now());
+        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", null, "{}", Instant.now());
         Message msg = Message.builder().messageId("m1").payload(new Message.Payload()).build();
         when(repository.findAllBySenderId("s1")).thenReturn(Uni.createFrom().item(List.of(row)));
         when(mapper.fromHistoryRow(row)).thenReturn(msg);
@@ -99,7 +99,7 @@ class HistoryPostgresAdapterTest {
 
     @Test
     void getBySenderId_mapperReturnsNull_filtersOut() {
-        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", "{}", Instant.now());
+        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", null, "{}", Instant.now());
         when(repository.findAllBySenderId("s1")).thenReturn(Uni.createFrom().item(List.of(row)));
         when(mapper.fromHistoryRow(row)).thenReturn(null);
 
@@ -124,7 +124,7 @@ class HistoryPostgresAdapterTest {
 
     @Test
     void getAllBySenderId_successful() {
-        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", "{}", Instant.now());
+        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", null, "{}", Instant.now());
         Message msg = Message.builder().messageId("m1").payload(new Message.Payload()).build();
         when(repository.findAllByParticipantId("p1")).thenReturn(Uni.createFrom().item(List.of(row)));
         when(mapper.fromHistoryRow(row)).thenReturn(msg);
@@ -136,7 +136,7 @@ class HistoryPostgresAdapterTest {
 
     @Test
     void getAllBySenderId_mapperReturnsNull_filtersOut() {
-        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", "{}", Instant.now());
+        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", null, "{}", Instant.now());
         when(repository.findAllByParticipantId("p1")).thenReturn(Uni.createFrom().item(List.of(row)));
         when(mapper.fromHistoryRow(row)).thenReturn(null);
 
@@ -166,7 +166,7 @@ class HistoryPostgresAdapterTest {
     @Test
     void addBySenderId_invalidHistoryRow_skipsInsert() {
         Message msg = Message.builder().messageId("m1").payload(new Message.Payload()).build();
-        HistoryRow row = new HistoryRow(null, "c1", "s1", "r1", "{}", Instant.now());
+        HistoryRow row = new HistoryRow(null, "c1", "s1", "r1", null, "{}", Instant.now());
         when(mapper.toHistoryRow(msg)).thenReturn(row);
 
         adapter.addBySenderId("cid", msg);
@@ -177,7 +177,7 @@ class HistoryPostgresAdapterTest {
     @Test
     void addBySenderId_validMessage_callsRepository() {
         Message msg = Message.builder().messageId("m1").payload(new Message.Payload()).build();
-        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", "{}", Instant.now());
+        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", null, "{}", Instant.now());
         when(mapper.toHistoryRow(msg)).thenReturn(row);
         when(repository.insertHistoryBatch(List.of(row))).thenReturn(Uni.createFrom().item(List.of()));
 
@@ -189,7 +189,7 @@ class HistoryPostgresAdapterTest {
     @Test
     void addBySenderId_repositoryFailure_loggedButNotThrown() {
         Message msg = Message.builder().messageId("m1").payload(new Message.Payload()).build();
-        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", "{}", Instant.now());
+        HistoryRow row = new HistoryRow("m1", "c1", "s1", "r1", null, "{}", Instant.now());
         when(mapper.toHistoryRow(msg)).thenReturn(row);
         when(repository.insertHistoryBatch(List.of(row))).thenReturn(Uni.createFrom().failure(new RuntimeException("fail")));
 

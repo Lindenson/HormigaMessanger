@@ -43,6 +43,8 @@ public class ChatResource {
 
     public record CreateChatRequest(String clientId, String masterId, Map<String, String> metadata) {}
 
+    public record FreezeRequest(String orderId) {}
+
     @POST
     public Uni<Response> create(
             @HeaderParam(IdentityHeaders.USER_ID) String userId,
@@ -176,14 +178,19 @@ public class ChatResource {
             @HeaderParam(IdentityHeaders.USER_ID) String userId,
             @HeaderParam(IdentityHeaders.USER_NAME) String userName,
             @HeaderParam(IdentityHeaders.USER_ROLE) String role,
-            @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
+            @HeaderParam(IdentityHeaders.USER_EMAIL) String email,
+            FreezeRequest req) {
         var caller = auth.fromHeaders(userId, userName, role, email);
         if (caller.isEmpty()) return unauthorized();
+        // Freeze is message-level, scoped by orderId (UC-U22) — there is no chat-wide freeze.
+        if (req == null || req.orderId() == null || req.orderId().isBlank()) {
+            return Uni.createFrom().item(Response.status(Response.Status.BAD_REQUEST).build());
+        }
         String meId = caller.get().id();
         return conversations.findById(chatId).flatMap(conv -> {
             if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
             if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
-            return moderation.freezeConversation(chatId)
+            return moderation.freezeByOrder(chatId, req.orderId())
                     .map(n -> Response.ok(Map.of("frozen", n)).build());
         });
     }

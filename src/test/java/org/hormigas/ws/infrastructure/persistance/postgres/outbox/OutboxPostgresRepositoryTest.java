@@ -34,7 +34,8 @@ public class OutboxPostgresRepositoryTest {
                     sender_id VARCHAR(128),
                     recipient_id VARCHAR(128),
                     payload_json JSONB NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT now() NOT NULL
+                    created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
+                    order_id VARCHAR(128)
                 );
                 CREATE INDEX idx_mh_conversation_id ON message_history(conversation_id);
                 CREATE INDEX idx_mh_sender_id ON message_history(sender_id);
@@ -59,6 +60,9 @@ public class OutboxPostgresRepositoryTest {
                 );
                 CREATE INDEX IF NOT EXISTS idx_outbox_id_lease ON outbox(id, lease_until);
                 """).execute().await().indefinitely();
+        // Shared Dev Services DB: ensure order_id exists regardless of which test created the table.
+        client.query("ALTER TABLE message_history ADD COLUMN IF NOT EXISTS order_id VARCHAR(128)")
+                .execute().await().indefinitely();
     }
 
     @BeforeEach
@@ -87,7 +91,7 @@ public class OutboxPostgresRepositoryTest {
     private HistoryRow sampleHistory(String conversationId, int idx) {
         String msgId = "msg-" + idx;
         String payloadJson = "{\"messageId\":\"" + msgId + "\",\"payload\":{\"kind\":\"text\",\"body\":\"hello " + idx + "\"}}";
-        return new HistoryRow(msgId, conversationId, "sender-" + idx, "recipient-" + idx, payloadJson, Instant.now());
+        return new HistoryRow(msgId, conversationId, "sender-" + idx, "recipient-" + idx, null, payloadJson, Instant.now());
     }
 
     @Test
