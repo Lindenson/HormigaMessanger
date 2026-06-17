@@ -11,6 +11,7 @@ import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.infrastructure.rest.history.security.TokenVerifier;
 import org.hormigas.ws.infrastructure.security.IdentityHeaders;
 import org.hormigas.ws.ports.history.History;
+import org.hormigas.ws.ports.message.MessageModeration;
 
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,9 @@ public class ChatResource {
 
     @Inject
     History<Message> history;
+
+    @Inject
+    MessageModeration moderation;
 
     public record CreateChatRequest(String clientId, String masterId, Map<String, String> metadata) {}
 
@@ -136,6 +140,48 @@ public class ChatResource {
         var caller = auth.fromHeaders(userId, userName, role, email);
         if (caller.isEmpty()) return unauthorized();
         return conversations.setBlocked(chatId, caller.get().id(), false).map(this::toResponse);
+    }
+
+    @DELETE
+    @Path("/{chatId}/messages/{messageId}")
+    public Uni<Response> deleteMessage(
+            @PathParam("chatId") String chatId,
+            @PathParam("messageId") String messageId,
+            @HeaderParam(IdentityHeaders.USER_ID) String userId,
+            @HeaderParam(IdentityHeaders.USER_NAME) String userName,
+            @HeaderParam(IdentityHeaders.USER_ROLE) String role,
+            @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
+        var caller = auth.fromHeaders(userId, userName, role, email);
+        if (caller.isEmpty()) return unauthorized();
+        String meId = caller.get().id();
+        return conversations.findById(chatId).flatMap(conv -> {
+            if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
+            if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
+            return moderation.deleteMessage(chatId, messageId).map(outcome -> switch (outcome) {
+                case DELETED -> Response.noContent().build();
+                case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();
+                case FROZEN -> Response.status(Response.Status.CONFLICT).build(); // 409: frozen, immutable
+            });
+        });
+    }
+
+    @POST
+    @Path("/{chatId}/freeze")
+    public Uni<Response> freeze(
+            @PathParam("chatId") String chatId,
+            @HeaderParam(IdentityHeaders.USER_ID) String userId,
+            @HeaderParam(IdentityHeaders.USER_NAME) String userName,
+            @HeaderParam(IdentityHeaders.USER_ROLE) String role,
+            @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
+        var caller = auth.fromHeaders(userId, userName, role, email);
+        if (caller.isEmpty()) return unauthorized();
+        String meId = caller.get().id();
+        return conversations.findById(chatId).flatMap(conv -> {
+            if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
+            if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
+            return moderation.freezeConversation(chatId)
+                    .map(n -> Response.ok(Map.of("frozen", n)).build());
+        });
     }
 
     private Response toResponse(ConversationService.Outcome outcome) {
