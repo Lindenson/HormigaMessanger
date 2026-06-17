@@ -60,8 +60,8 @@
         recovery-factor: 1.05
       channel:
         retry: true
-        max-backoff-ms: 300
-        min-backoff-ms: 1000
+        min-backoff-ms: 300
+        max-backoff-ms: 1000
         max-retries: 3
       credits:
         max-value: 100

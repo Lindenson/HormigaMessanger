@@ -44,6 +44,21 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     * match frames[*].type contains 'CHAT_OUT'
     * match frames[*].payload.body contains body
 
+  Scenario: UC-M10 — sender receives a server ACK (SENT) for a persistent message
+    # only the sender needs to be online; the server ACKs on persist (correlationId = sent messageId)
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * eval java.lang.Thread.sleep(1000)
+    * def now = java.lang.System.currentTimeMillis()
+    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"ack-' + uid + '"}}'
+    * masterSock.send(msg)
+    * listen 5000
+    * def a1 = (listenResult == null ? '{}' : ('' + listenResult))
+    * listen 2000
+    * def a2 = (listenResult == null ? '{}' : ('' + listenResult))
+    * json acks = '[' + a1 + ',' + a2 + ']'
+    * match acks[*].type contains 'CHAT_ACK'
+    * match acks[*].correlationId contains uid
+
   Scenario: UC-U50/U12 — a sent message is durable and retrievable via conversation history
     * def body = 'persist-' + uid
     * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
