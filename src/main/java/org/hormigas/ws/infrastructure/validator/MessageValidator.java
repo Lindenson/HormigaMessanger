@@ -1,4 +1,4 @@
-package org.hormigas.ws.domain.validator.inout;
+package org.hormigas.ws.infrastructure.validator;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import org.hormigas.ws.domain.message.Message;
