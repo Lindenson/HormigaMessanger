@@ -43,5 +43,8 @@ function fn() {
   config.clientHeaders = function () { return config.idHeaders(config.clientId, config.clientName, 'CLIENT', config.clientEmail); };
   config.noAuthHeaders = function () { return { 'Content-Type': 'application/json', 'Accept': 'application/json' }; };
 
+  // NB: Karate 1.4.1 + GraalVM on this JDK cannot build a JsFunction WS handler — WS tests use a
+  // null handler and the `listen` keyword + listenResult, collecting a few frames to skip presence.
+
   return config;
 }

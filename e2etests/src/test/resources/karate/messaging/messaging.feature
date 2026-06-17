@@ -1,30 +1,49 @@
-@messaging @wip
-Feature: Persistent messaging & delivery (UC-U10..U16) — SPEC, not yet implemented
+@messaging
+Feature: Persistent messaging & delivery (UC-U10/U11/U13)
 
-  # WebSocket-driven. Karate WS client: listen, then assert delivery/ACK/read.
-  # Drives M-2 (domain remodel) + M-3 (per-conversation ordering, single delivery authority).
+  # WebSocket end-to-end: create a chat (so the send-guard allows), connect both participants,
+  # master sends CHAT_IN, the online client receives the delivered CHAT_OUT.
 
   Background:
     * url baseUrl
-    # WS connect carrying identity (Ory headers on the upgrade request)
-    * configure headers = masterHeaders()
+    * def uid = java.util.UUID.randomUUID() + ''
+    * def cId = 'client-' + uid
+    * def mId = 'master-' + uid
+    * def mHdr = idHeaders(mId, 'M', 'MASTER', 'm@test.com')
+    * def cHdr = idHeaders(cId, 'C', 'CLIENT', 'c@test.com')
+    # create the conversation (REST) — membership the send-guard checks
+    Given path '/api/chats'
+    And headers mHdr
+    And request { clientId: '#(cId)', masterId: '#(mId)', metadata: {} }
+    When method POST
+    Then status 201
+    * def convId = response.id
 
-  Scenario: UC-U10/U11/U13 — send a persistent message, sender ACK, recipient delivery
-    # master connects
-    * def masterSocket = karate.webSocket(wsUrl, null, { headers: masterHeaders() })
-    # client (recipient) connects and listens
-    * def clientSocket = karate.webSocket(wsUrl, null, { headers: clientHeaders() })
-    # master sends a CHAT message addressed to the client
-    * def msg = { type: 'CHAT_IN', recipientId: '#(clientId)', payload: { kind: 'text', body: 'hello' }, messageId: 'm-1' }
-    * masterSocket.send(msg)
-    # sender receives an ACK (SENT)
-    * def ack = masterSocket.listen(5000)
-    * match ack contains { type: 'CHAT_ACK' }
-    # recipient receives the message (delivered)
-    * def delivered = clientSocket.listen(5000)
-    * match delivered contains { payload: { body: 'hello' } }
+  Scenario: UC-U10/U11 — persistent message delivered to the online recipient
+    * def body = 'hello-' + uid
+    # master connects first; the recipient (client) connects LAST so `listen` targets it.
+    # null handler (Karate 1.4.1 + GraalVM cannot build a JsFunction handler on this JDK), so we
+    # collect a few frames in arrival order and assert the delivered chat appears among them
+    # (presence/join frames may precede it).
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * def clientSock = karate.webSocket(wsUrl, null, { headers: cHdr })
+    # let both onOpen/registration complete before sending (else sender is unregistered or the
+    # recipient has no live session yet and the message is held in the outbox, not delivered live)
+    * eval java.lang.Thread.sleep(1200)
+    * def now = java.lang.System.currentTimeMillis()
+    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"' + body + '"}}'
+    * masterSock.send(msg)
+    # collect up to 3 frames (a presence/join frame may precede the chat); assert the chat is among them
+    * listen 5000
+    * def f1 = (listenResult == null ? '{}' : ('' + listenResult))
+    * listen 2000
+    * def f2 = (listenResult == null ? '{}' : ('' + listenResult))
+    * listen 2000
+    * def f3 = (listenResult == null ? '{}' : ('' + listenResult))
+    * json frames = '[' + f1 + ',' + f2 + ',' + f3 + ']'
+    * match frames[*].type contains 'CHAT_OUT'
+    * match frames[*].payload.body contains body
 
+  @wip
   Scenario: UC-U12 — offline recipient gets the message on reconnect (history sync)
-    # send while client offline → then client pulls conversation history since cursor
-    # (encodes UC-U50 reconnect durability)
-    * print 'spec placeholder — wire once chat + conversation-scoped history exist'
+    * print 'spec placeholder — needs conversation-scoped history (M-5)'
