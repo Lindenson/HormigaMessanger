@@ -11,7 +11,6 @@ import org.hormigas.ws.core.garbage.GarbageCollector;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.ports.outbox.OutboxManager;
 import org.hormigas.ws.ports.tetris.TetrisMarker;
-import org.hormigas.ws.ports.watermark.WatermarksRegistry;
 
 @Slf4j
 @ApplicationScoped
