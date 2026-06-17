@@ -65,6 +65,14 @@ public class InMemoryMessageHistory implements History<Message> {
         return Uni.createFrom().item(out);
     }
 
+    @Override
+    public Uni<List<Message>> getByConversation(String conversationId, String sinceMessageId, int limit) {
+        return getByConversation(conversationId).map(all -> all.stream()
+                .filter(m -> sinceMessageId == null || m.getMessageId().compareTo(sinceMessageId) > 0)
+                .limit(Math.max(0, limit))
+                .toList());
+    }
+
     private List<Message> getMessagesFromDeque(Deque<MessageRecord> deque) {
         if (deque == null) return List.of();
         cleanupClientHistory(deque);

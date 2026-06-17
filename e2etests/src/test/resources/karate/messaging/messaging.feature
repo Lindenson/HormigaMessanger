@@ -184,3 +184,29 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     When method GET
     Then status 200
     And match response[*].payload.body contains body
+
+  Scenario: UC-U50 — history sync is cursor-paginated (since + limit)
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * eval java.lang.Thread.sleep(1000)
+    * def now = java.lang.System.currentTimeMillis()
+    * def mk = function(i){ return '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"p' + i + '-' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"page' + i + '-' + uid + '"}}' }
+    * masterSock.send(mk(1))
+    * masterSock.send(mk(2))
+    * masterSock.send(mk(3))
+    * eval java.lang.Thread.sleep(1500)
+    # first page: limit=2 → exactly the two oldest (server reassigns ids; ordering is by ULID)
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    And param limit = 2
+    When method GET
+    Then status 200
+    And match response == '#[2]'
+    * def cursor = response[1].messageId
+    # next page after the cursor → the remaining message
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    And param since = cursor
+    And param limit = 2
+    When method GET
+    Then status 200
+    And match response == '#[1]'

@@ -136,6 +136,21 @@ public class HistoryPostgresRepository implements HistoryRepository {
                 .onItem().transform(rows -> mapToHistoryRows(rows.iterator()));
     }
 
+    @Override
+    public Uni<List<HistoryRow>> findByConversationSince(String conversationId, String sinceMessageId, int limit) {
+        // messageId is a ULID (monotonic) → it is both the sort key and the page cursor. The
+        // ($2 IS NULL OR ...) form lets a null cursor mean "from the start".
+        String sql = """
+                SELECT * FROM message_history
+                 WHERE conversation_id = $1 AND ($2::text IS NULL OR message_id > $2)
+                 ORDER BY message_id ASC
+                 LIMIT $3
+                """;
+        return client.preparedQuery(sql)
+                .execute(Tuple.of(conversationId, sinceMessageId, limit))
+                .onItem().transform(rows -> mapToHistoryRows(rows.iterator()));
+    }
+
     // ----------------------------------------------------------------------
     // findAllBySenderId
     // ----------------------------------------------------------------------
