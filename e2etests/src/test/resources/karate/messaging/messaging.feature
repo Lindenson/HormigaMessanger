@@ -44,6 +44,18 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     * match frames[*].type contains 'CHAT_OUT'
     * match frames[*].payload.body contains body
 
-  @wip
-  Scenario: UC-U12 — offline recipient gets the message on reconnect (history sync)
-    * print 'spec placeholder — needs conversation-scoped history (M-5)'
+  Scenario: UC-U50/U12 — a sent message is durable and retrievable via conversation history
+    * def body = 'persist-' + uid
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * def clientSock = karate.webSocket(wsUrl, null, { headers: cHdr })
+    * eval java.lang.Thread.sleep(1200)
+    * def now = java.lang.System.currentTimeMillis()
+    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"' + body + '"}}'
+    * masterSock.send(msg)
+    # let the persist (History + Outbox) settle, then pull the conversation history via REST
+    * eval java.lang.Thread.sleep(1500)
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    When method GET
+    Then status 200
+    And match response[*].payload.body contains body

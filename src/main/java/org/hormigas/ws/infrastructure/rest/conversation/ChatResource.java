@@ -7,8 +7,10 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.hormigas.ws.core.conversation.ConversationService;
 import org.hormigas.ws.domain.credentials.ClientData;
+import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.infrastructure.rest.history.security.TokenVerifier;
 import org.hormigas.ws.infrastructure.security.IdentityHeaders;
+import org.hormigas.ws.ports.history.History;
 
 import java.util.List;
 import java.util.Map;
@@ -27,6 +29,9 @@ public class ChatResource {
 
     @Inject
     TokenVerifier auth;
+
+    @Inject
+    History<Message> history;
 
     public record CreateChatRequest(String clientId, String masterId, Map<String, String> metadata) {}
 
@@ -81,15 +86,16 @@ public class ChatResource {
         }
         ClientData me = caller.get();
         return conversations.findById(chatId)
-                .map(conv -> {
+                .flatMap(conv -> {
                     if (conv == null) {
-                        return Response.status(Response.Status.NOT_FOUND).build();
+                        return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
                     }
                     if (!conv.hasParticipant(me.id())) {
-                        return Response.status(Response.Status.FORBIDDEN).build();
+                        return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
                     }
-                    // Conversation-scoped history wiring is M-5; membership-gated for now.
-                    return Response.ok(List.of()).build();
+                    // Conversation-scoped history sync (UC-U50 / reconnect durability).
+                    return history.getByConversation(chatId)
+                            .map(messages -> Response.ok(messages).build());
                 });
     }
 

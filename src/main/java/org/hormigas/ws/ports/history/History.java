@@ -8,5 +8,9 @@ public interface History<T> {
     Uni<List<T>> getByRecipientId(String clientId);
     Uni<List<T>> getBySenderId(String clientId);
     Uni<List<T>> getAllBySenderId(String clientId);
+
+    /** All messages of a conversation, oldest-first — the reconnect/history-sync read (UC-U50). */
+    Uni<List<T>> getByConversation(String conversationId);
+
     void addBySenderId(String clientId, T message);
 }
