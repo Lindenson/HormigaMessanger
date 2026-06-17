@@ -58,6 +58,13 @@ public class Deliverer implements DeliveryChannel<Message> {
                 .discardItems()
                 .replaceWith(StageResult.<Message>passed())
                 .onItem().invoke(() -> log.debug("Delivered {}", message.getMessageId()))
+                // UC-U41: a live delivery to an *open* session that fails means the recipient is
+                // effectively gone — mark them offline so the poller stops phantom-online retries
+                // and the message is held in the outbox for redelivery on reconnect (avoids GC stall).
+                .onFailure().invoke(err -> {
+                    log.warn("Delivery to {} failed; marking offline", message.getRecipientId(), err);
+                    coordinator.passive(message.getRecipientId());
+                })
                 .onFailure().recoverWithItem(StageResult.failed());
     }
 
