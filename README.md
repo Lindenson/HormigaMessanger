@@ -4,7 +4,7 @@
 > guaranteed-delivery WebSocket service built on **Java 25 + Quarkus + Mutiny** with a clean
 > **Hexagonal** core.
 >
-> 🌍 Other languages: [Russian](./README.ru.md) *(pending regeneration — currently out of date)*
+> 🌍 Other languages: [Russian](./README.ru.md)
 
 It sits alongside the other Hormigas services (MasterProfile `:8080`, ClientProfile `:8081`,
 Order/TaskManager `:8082`) and lets the two parties of a job — a **master** and a **client** —
