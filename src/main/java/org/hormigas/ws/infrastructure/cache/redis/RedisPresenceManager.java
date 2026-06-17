@@ -9,6 +9,7 @@ import io.quarkus.redis.datasource.value.ReactiveValueCommands;
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.redis.client.RedisAPI;
 import io.vertx.mutiny.redis.client.Response;
+import io.quarkus.runtime.Startup;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.function.Function;
 
 @Slf4j
+@Startup
 @ApplicationScoped
 @IfBuildProperty(name = "processing.messages.storage.service", stringValue = "redis")
 public class RedisPresenceManager implements PresenceManager {

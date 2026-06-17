@@ -16,3 +16,16 @@ Feature: Identity & authorization (UC-U60, UC-U61)
     When method GET
     Then status 200
     And match response == '#array'
+
+  Scenario: UC-U60 — presence is not public (401 without identity)
+    Given path '/api/presence'
+    And headers noAuthHeaders()
+    When method GET
+    Then status 401
+
+  Scenario: UC-U60 — presence with identity is accepted (200)
+    Given path '/api/presence'
+    And headers clientHeaders()
+    When method GET
+    Then status 200
+    And match response == '#array'

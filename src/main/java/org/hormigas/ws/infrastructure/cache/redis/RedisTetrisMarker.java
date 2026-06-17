@@ -4,6 +4,7 @@ import io.quarkus.arc.properties.IfBuildProperty;
 import io.smallrye.common.constraint.NotNull;
 import io.smallrye.mutiny.Uni;
 import io.vertx.mutiny.redis.client.RedisAPI;
+import io.quarkus.runtime.Startup;
 import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -41,6 +42,7 @@ import java.util.List;
  * even when all recipients are fully acknowledged.</p>
  */
 @Slf4j
+@Startup
 @ApplicationScoped
 @IfBuildProperty(name = "processing.messages.storage.service", stringValue = "redis")
 public class RedisTetrisMarker implements TetrisMarker<Message> {
