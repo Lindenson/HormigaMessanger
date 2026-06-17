@@ -1,4 +1,4 @@
-package org.hormigas.ws.domain.generator.ulid;
+package org.hormigas.ws.infrastructure.generator;
 
 import com.github.f4b6a3.ulid.UlidCreator;
 import jakarta.enterprise.context.ApplicationScoped;
