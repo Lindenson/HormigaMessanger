@@ -115,7 +115,7 @@ public class LocalSessionRegistry<T> implements SessionRegistry<T> {
                 .collect(Collectors.toMap(ClientSession::getClientId, s ->
                         s, (a, b) -> a))
                 .values().stream()
-                .map(s -> new ClientData(s.getClientId(), s.getClientName()))
+                .map(s -> new ClientData(s.getClientId(), s.getClientName(), null, null))
                 .toList();
     }
 

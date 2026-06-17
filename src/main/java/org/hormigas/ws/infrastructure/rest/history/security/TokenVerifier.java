@@ -1,25 +1,19 @@
 package org.hormigas.ws.infrastructure.rest.history.security;
 
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.inject.Inject;
 import org.hormigas.ws.domain.credentials.ClientData;
-import org.hormigas.ws.infrastructure.websocket.security.JwtValidator;
+import org.hormigas.ws.infrastructure.security.IdentityHeaders;
 
 import java.util.Optional;
 
-
+/**
+ * REST identity resolver. Reads the Ory Oathkeeper-injected headers (the edge already
+ * authenticated); no token validation here.
+ */
 @ApplicationScoped
 public class TokenVerifier {
 
-    @Inject
-    JwtValidator jwtValidator;
-
-    public Optional<ClientData> verifyBearerToken(String authorization) {
-        if (authorization == null || !authorization.startsWith("Bearer ")) {
-            return Optional.empty();
-        }
-
-        String token = authorization.substring(7);
-        return jwtValidator.validate(token);
+    public Optional<ClientData> fromHeaders(String userId, String userName, String role, String email) {
+        return IdentityHeaders.fromHeaders(userId, userName, role, email);
     }
 }
