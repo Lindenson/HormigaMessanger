@@ -1,0 +1,37 @@
+# Local e2e infra for the Karate harness. Ports published to localhost so the app (run with
+# DB_HOST=localhost REDIS_HOST=localhost) and Karate can reach them.
+#   docker compose -f e2etests/docker-compose.yml up -d
+services:
+  messenger-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: hormigasdb
+      POSTGRES_USER: ant
+      POSTGRES_PASSWORD: ant
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ant -d hormigasdb"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  messenger-redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  messenger-minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: hormiga
+      MINIO_ROOT_PASSWORD: hormiga123
+    ports:
+      - "9000:9000"
+      - "9001:9001"

@@ -9,12 +9,12 @@
 
     datasource:
       db-kind: postgresql
-      username: ant
-      password: ant
+      username: ${DB_USER:ant}
+      password: ${DB_PASSWORD:ant}
       jdbc:
-        url: jdbc:postgresql://postgres:5432/hormigasdb
+        url: jdbc:postgresql://${DB_HOST:postgres}:${DB_PORT:5432}/${DB_NAME:hormigasdb}
       reactive:
-        url: postgres://postgres/hormigasdb
+        url: postgres://${DB_HOST:postgres}:${DB_PORT:5432}/${DB_NAME:hormigasdb}
 
     flyway:
       migrate-at-start: true
@@ -23,7 +23,7 @@
         - db/migration
 
     redis:
-      hosts: redis://redis:6379
+      hosts: redis://${REDIS_HOST:redis}:${REDIS_PORT:6379}
       timeout: 5s
 
     hibernate-orm:
