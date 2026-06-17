@@ -109,7 +109,17 @@ public class HistoryPostgresRepository implements HistoryRepository {
     // ----------------------------------------------------------------------
     @Override
     public Uni<Integer> deleteOlderThan(Instant threshold) {
-        String sql = "DELETE FROM message_history WHERE created_at < $1";
+        // Normal retention class only — frozen messages have their own longer TTL (decision #6),
+        // so a contract's frozen evidence is never purged by the regular-history sweep.
+        String sql = "DELETE FROM message_history WHERE created_at < $1 AND frozen = FALSE";
+        return client.preparedQuery(sql)
+                .execute(Tuple.of(threshold.atOffset(ZoneOffset.UTC)))
+                .onItem().transform(SqlResult::rowCount);
+    }
+
+    @Override
+    public Uni<Integer> deleteFrozenOlderThan(Instant threshold) {
+        String sql = "DELETE FROM message_history WHERE created_at < $1 AND frozen = TRUE";
         return client.preparedQuery(sql)
                 .execute(Tuple.of(threshold.atOffset(ZoneOffset.UTC)))
                 .onItem().transform(SqlResult::rowCount);

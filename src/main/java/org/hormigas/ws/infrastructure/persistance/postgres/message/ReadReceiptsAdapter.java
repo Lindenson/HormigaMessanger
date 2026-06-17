@@ -19,6 +19,16 @@ public class ReadReceiptsAdapter implements ReadReceipts {
     PgPool client;
 
     @Override
+    public Uni<Integer> markDelivered(String messageId) {
+        return client.preparedQuery("""
+                        UPDATE message_history SET status = 'DELIVERED'
+                         WHERE message_id = $1 AND status = 'SENT'
+                        """)
+                .execute(Tuple.of(messageId))
+                .map(r -> r.rowCount());
+    }
+
+    @Override
     public Uni<Integer> markRead(String conversationId, String readerId) {
         return client.preparedQuery("""
                         UPDATE message_history SET status = 'READ'

@@ -41,7 +41,8 @@ public class HistoryPostgresRepositoryTest {
                     recipient_id VARCHAR(128) NOT NULL,
                     payload_json JSONB NOT NULL,
                     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
-                    order_id VARCHAR(128)
+                    order_id VARCHAR(128),
+                    frozen BOOLEAN NOT NULL DEFAULT FALSE
                 );
                 CREATE INDEX IF NOT EXISTS idx_message_history_message_id ON message_history(message_id);
                 CREATE INDEX IF NOT EXISTS idx_message_history_conversation_id ON message_history(conversation_id);
@@ -49,8 +50,10 @@ public class HistoryPostgresRepositoryTest {
                 CREATE INDEX IF NOT EXISTS idx_message_history_recipient_id ON message_history(recipient_id);
                 """).execute().await().indefinitely();
         // Shared Dev Services DB: another @QuarkusTest may have created the table first without
-        // order_id — ensure it exists regardless of test order.
+        // these columns — ensure they exist regardless of test order.
         client.query("ALTER TABLE message_history ADD COLUMN IF NOT EXISTS order_id VARCHAR(128)")
+                .execute().await().indefinitely();
+        client.query("ALTER TABLE message_history ADD COLUMN IF NOT EXISTS frozen BOOLEAN NOT NULL DEFAULT FALSE")
                 .execute().await().indefinitely();
     }
 
@@ -116,6 +119,28 @@ public class HistoryPostgresRepositoryTest {
         long count = client.query("SELECT count(*) FROM message_history").execute().await().indefinitely()
                 .iterator().next().getLong(0);
         assertEquals(0L, count);
+    }
+
+    @Test
+    public void testDeleteOlderThan_skipsFrozen_separateFrozenPurge() throws InterruptedException {
+        // normal + frozen message, both older than the threshold (UC-U23, decision #6)
+        repo.insertHistoryBatch(List.of(sample("m-normal", "conv-1", "s1", "r1", 1))).await().indefinitely();
+        repo.insertHistoryBatch(List.of(sample("m-frozen", "conv-1", "s1", "r2", 2))).await().indefinitely();
+        client.preparedQuery("UPDATE message_history SET frozen = TRUE WHERE message_id = $1")
+                .execute(io.vertx.mutiny.sqlclient.Tuple.of("m-frozen")).await().indefinitely();
+
+        Instant threshold = Instant.now().plusMillis(10);
+        Thread.sleep(20);
+
+        // the normal-retention sweep purges only the non-frozen message; the frozen one survives
+        assertEquals(1, repo.deleteOlderThan(threshold).await().indefinitely());
+        List<HistoryRow> remaining = repo.findAllByConversationId("conv-1").await().indefinitely();
+        assertEquals(1, remaining.size());
+        assertEquals("m-frozen", remaining.get(0).messageId());
+
+        // the frozen-retention sweep (longer TTL) purges the frozen message
+        assertEquals(1, repo.deleteFrozenOlderThan(threshold).await().indefinitely());
+        assertEquals(0, repo.findAllByConversationId("conv-1").await().indefinitely().size());
     }
 
     @Test

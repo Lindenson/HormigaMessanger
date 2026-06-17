@@ -24,9 +24,16 @@ public interface HistoryRepository {
     Uni<Integer> deleteByMessageIds(List<String> messageIds);
 
     // ----------------------------------------------------------------------
-    // deleteOlderThan
+    // deleteOlderThan — normal retention class ONLY (UC-U23, decision #6).
+    // Frozen messages are a separate, longer retention class and are NOT purged here; use
+    // deleteFrozenOlderThan with the longer threshold instead.
     // ----------------------------------------------------------------------
     Uni<Integer> deleteOlderThan(Instant threshold);
+
+    // ----------------------------------------------------------------------
+    // deleteFrozenOlderThan — frozen retention class (≈ order-retention, longer than normal).
+    // ----------------------------------------------------------------------
+    Uni<Integer> deleteFrozenOlderThan(Instant threshold);
 
     // ----------------------------------------------------------------------
     // findAllByConversationId
