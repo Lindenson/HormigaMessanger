@@ -7,9 +7,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.hormigas.ws.core.presence.AsyncPresence;
 import org.hormigas.ws.core.watermark.AsyncWatermark;
 import org.hormigas.ws.domain.credentials.ClientData;
+import org.hormigas.ws.domain.session.ClientSession;
 import org.hormigas.ws.ports.notifier.Coordinator;
 import org.hormigas.ws.ports.session.SessionRegistry;
 
+import java.util.List;
 import java.util.Optional;
 
 
@@ -32,6 +34,7 @@ public class PresenceCoordinator implements Coordinator<WebSocketConnection> {
     @Override
     public void join(ClientData newClient, WebSocketConnection connection) {
         try {
+            evictPriorSessions(newClient.id(), connection);
             registry.register(newClient, connection);
             presence.add(newClient.id(), newClient.name(), System.currentTimeMillis());
             publisher.publishInit(newClient, registry);
@@ -39,6 +42,25 @@ public class PresenceCoordinator implements Coordinator<WebSocketConnection> {
             log.debug("Presence INIT coordinated for {}", newClient.id());
         } catch (Exception e) {
             log.error("Failed to coordinate INIT presence for {}", newClient.id(), e);
+        }
+    }
+
+    /**
+     * Single active session per user: when a new connection arrives for a client, evict any prior
+     * ones. We deregister each old connection FIRST so its later {@code @OnClose → leave} is a no-op
+     * (deregister returns null) — that keeps the takeover clean: the new session's presence and the
+     * client's GC watermark are NOT torn down by the old socket closing.
+     */
+    private void evictPriorSessions(String clientId, WebSocketConnection keep) {
+        List<WebSocketConnection> stale = registry.streamSessionsByClientId(clientId)
+                .map(ClientSession::getSession)
+                .filter(c -> !c.equals(keep))
+                .toList();
+        for (WebSocketConnection old : stale) {
+            registry.deregister(old);
+            old.close().subscribe().with(
+                    x -> log.debug("Evicted prior session for {}", clientId),
+                    e -> log.debug("Error closing prior session for {}: {}", clientId, e.getMessage()));
         }
     }
 

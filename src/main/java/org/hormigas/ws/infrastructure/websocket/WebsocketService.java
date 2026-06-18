@@ -63,6 +63,16 @@ public class WebsocketService {
         coordinator.leave(connection);
     }
 
+    /**
+     * Liveness: the server auto-pings (see {@code auto-ping-interval}); a live client replies pong.
+     * Refreshing activity here lets the session reaper distinguish a silent-but-alive client from a
+     * dead connection (which stops ponging and is force-closed after the idle timeout).
+     */
+    @OnPongMessage
+    public void onPong(io.vertx.core.buffer.Buffer data, WebSocketConnection connection) {
+        coordinator.active(connection);
+    }
+
 
     @OnTextMessage
     public Uni<Void> onMessage(String rawJson, WebSocketConnection connection) {
