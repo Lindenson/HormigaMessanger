@@ -108,7 +108,8 @@ Each message kind maps to one of four **handling strategies** (orthogonal proper
 ### Wire `MessageType` values
 
 ```
-CHAT_IN     CHAT_OUT     CHAT_ACK        # persistent chat (Strategy A)
+CHAT_IN     CHAT_OUT     CHAT_ACK        # persistent chat (Strategy A) + delivery ACK
+READ_IN     READ_OUT                     # read receipts (Strategy B): reader → server, server → sender
 SIGNAL_IN   SIGNAL_OUT   SIGNAL_ACK      # WebRTC signaling (Strategy S)
 PRESENT_INIT  PRESENT_JOIN  PRESENT_LEAVE   # presence (Strategy B)
 SERVICE_OUT                              # server→client technical message
@@ -127,7 +128,9 @@ Persisted status machine: **`SENT → DELIVERED → READ`**.
 - **DELIVERED** — set when the **recipient sends a delivery ACK** (`CHAT_ACK`, `correlationId` = the
   delivered messageId). A WS push is best-effort, so DELIVERED is ACK-confirmed, not push-assumed. The
   same ACK advances the GC watermark.
-- **READ** — persisted when the recipient acknowledges via `POST /api/chats/{id}/read`.
+- **READ** — the recipient sends a `READ_IN` over WS (fire-and-forget); the server persists `READ`
+  and pushes a `READ_OUT` to the sender (same realtime channel as DELIVERED). `POST /api/chats/{id}/read`
+  is the reconnect/bulk fallback — both go through the same core `markRead`.
 
 ### Persistent (Strategy A) happy path
 
@@ -312,7 +315,7 @@ ws://<host>/ws        # identity via the headers above; send/receive Message JSO
 | `POST /api/chats/{id}/block` · `DELETE …/block` | Blacklist / unblock the peer | `204` |
 | `DELETE /api/chats/{id}/messages/{messageId}` | Delete a message (only if not frozen) | `204` / `404` / `409` frozen |
 | `POST /api/chats/{id}/freeze` `{orderId}` | Freeze that order's messages (one-way) | `200 {frozen:n}` / `400` no orderId |
-| `POST /api/chats/{id}/read` | Recipient marks their received messages READ | `200 {read:n}` |
+| `POST /api/chats/{id}/read` | Recipient marks READ (reconnect/bulk **fallback**; primary is WS `READ_IN`) | `200 {read:n}` |
 | `GET /api/chats/{id}/receipts` | Per-message status (`SENT`/`DELIVERED`/`READ`) | `200` |
 
 ### REST — auxiliary
@@ -379,7 +382,7 @@ group; `@wip` scenarios are excluded from the default run:
 cd e2etests && JAVA_HOME=/path/to/jdk-21 mvn test -Dkarate.env=dev
 ```
 
-Current coverage: **156 unit/integration tests + 17 Karate scenarios**, all green.
+Current coverage: **159 unit/integration tests + 18 Karate scenarios**, all green.
 
 ---
 
@@ -388,17 +391,16 @@ Current coverage: **156 unit/integration tests + 17 Karate scenarios**, all gree
 **Implemented & tested:** chat lifecycle (idempotent create, list, soft-delete, blacklist),
 send-guard + `SENT` ACK, online delivery + offline hold, **ACK-driven `SENT→DELIVERED→READ`** + read
 receipts, immutability + conditional delete + **order-scoped freeze**, frozen retention class
-(primitive), presence + **offline-on-delivery-failure** + **heartbeat/pong reaper** (FR-PRES-03),
-watermark GC + **outbox-rehydration on Redis loss**, **single-active-session**, **cursor-paginated**
-reconnect history, Ory auth + membership authorization, opaque metadata + tz timestamps.
+(primitive + **scheduled retention sweep**), presence + **offline-on-delivery-failure** +
+**heartbeat/pong reaper** (FR-PRES-03), watermark GC + **outbox-rehydration on Redis loss**,
+**single-active-session**, **read receipts over WS** + **push to sender** (FR-MSG-06),
+**cursor-paginated** reconnect history, Ory auth + membership authorization, opaque metadata + tz timestamps.
 
 **Partial / deferred:**
 
 - 🟡 **Per-conversation ordering** (FR-MSG-07) — not yet implemented.
 - 🟡 **Event (Kafka) adapters** for create-chat & freeze (FR-CHAT-01 / FR-ARCH-01 / FR-RET-03) —
   deferred; REST side is live.
-- 🟡 **Read-receipt push to sender** (FR-MSG-06) — status is persisted & polled; no push yet.
-- 🟡 **Retention scheduler** (FR-RET-04/05) — primitives exist, not yet scheduled.
 - 🟡 **Strategy C** (retry-then-purge) — not a distinct pipeline yet (shares the cached path).
 - 🟡 **WebRTC signaling** (FR-SIG) — pipeline routes exist, no e2e test.
 - ⚪ **Credit rate-limiting** (FR-SEC-03) — optional v1, deferred.
@@ -411,11 +413,10 @@ reconnect history, Ory auth + membership authorization, opaque metadata + tz tim
 - **Per-conversation ordering** — keyed delivery lane + single delivery authority.
 - **Order integration** — Kafka consumer of "master interested in order" → create chat; contract
   event → freeze (completes the dual-driven model).
-- **Retention scheduler** — wire `deleteOlderThan` / `deleteFrozenOlderThan` to a scheduled sweep
-  with configurable TTLs.
+- **Strategy C** — a distinct retry-then-purge pipeline (own retention) for must-arrive notices.
 - **Horizontal sharding** — `CRC32(clientId) mod N` at the gateway + per-instance Outbox filtering
   (designed for; Redis already centralizes shared state).
-- **Attachments**, **read-receipt push**, **signaling e2e tests**.
+- **Attachments** (MinIO two-phase upload), **signaling e2e tests**.
 
 ---
 
