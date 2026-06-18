@@ -176,6 +176,34 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     Then status 200
     And match response.read == 0
 
+  Scenario: UC-U14 — read receipt over WebSocket marks READ (and pushes READ_OUT to the sender)
+    # The recipient marks read via a WS READ_IN (no REST call); the server persists READ and pushes a
+    # READ_OUT to the sender over the same Deliverer path used for CHAT_OUT (cross-socket frame capture
+    # is flaky under Karate's shared listen queue, so we assert the durable READ outcome here).
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * def clientSock = karate.webSocket(wsUrl, null, { headers: cHdr })
+    * eval java.lang.Thread.sleep(1200)
+    * def now = java.lang.System.currentTimeMillis()
+    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"readws-' + uid + '"}}'
+    * masterSock.send(msg)
+    * eval java.lang.Thread.sleep(1500)
+    # before reading, the message is SENT
+    Given path '/api/chats', convId, 'receipts'
+    And headers cHdr
+    When method GET
+    Then status 200
+    And match response[*].status == ['SENT']
+    # the recipient reads over WS (fire-and-forget READ_IN, no payload)
+    * def readIn = '{"type":"READ_IN","senderId":"' + cId + '","recipientId":"' + mId + '","conversationId":"' + convId + '","messageId":"r-' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC"}'
+    * clientSock.send(readIn)
+    * eval java.lang.Thread.sleep(1200)
+    # the persisted status reads back as READ — the WS read path worked end-to-end
+    Given path '/api/chats', convId, 'receipts'
+    And headers cHdr
+    When method GET
+    Then status 200
+    And match response[*].status contains 'READ'
+
   Scenario: UC-U50/U12 — a sent message is durable and retrievable via conversation history
     * def body = 'persist-' + uid
     * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })

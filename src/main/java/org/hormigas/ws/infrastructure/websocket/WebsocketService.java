@@ -15,8 +15,11 @@ import org.hormigas.ws.domain.message.MessageType;
 import org.hormigas.ws.domain.session.ClientSession;
 import org.hormigas.ws.domain.validator.ValidationResult;
 import org.hormigas.ws.domain.validator.Validator;
+import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.infrastructure.websocket.inbound.InboundPublisher;
 import org.hormigas.ws.infrastructure.websocket.utils.WebSocketUtils;
+import org.hormigas.ws.ports.channel.DeliveryChannel;
+import org.hormigas.ws.ports.message.ReadReceipts;
 import org.hormigas.ws.ports.notifier.Coordinator;
 import org.hormigas.ws.ports.session.SessionRegistry;
 
@@ -45,6 +48,12 @@ public class WebsocketService {
 
     @Inject
     ConversationService conversations;
+
+    @Inject
+    ReadReceipts receipts;
+
+    @Inject
+    DeliveryChannel<Message> deliveryChannel;
 
 
     private final ChannelFilter<Message, WebSocketConnection> channelFilter = new InboundMessageFilter<>();
@@ -116,11 +125,48 @@ public class WebsocketService {
                         });
             }
 
+            // Read receipt over WS (UC-U14): mark the reader's received messages READ, then push a
+            // READ_OUT to the peer (the original sender) — fire-and-forget. REST /read is the fallback.
+            if (message.getType() == MessageType.READ_IN) {
+                return markReadAndNotify(message.getConversationId(), clientSession.getClientId());
+            }
+
             incomingPublisher.publish(message);
         } catch (Exception e) {
             log.error("Invalid message format: {}", rawJson, e);
         }
         return Uni.createFrom().voidItem();
+    }
+
+    private Uni<Void> markReadAndNotify(String conversationId, String reader) {
+        return conversations.findById(conversationId)
+                .flatMap(conv -> {
+                    if (conv == null || !conv.hasParticipant(reader)) {
+                        log.warn("READ_IN ignored: conv={} reader={} (missing/not a member)", conversationId, reader);
+                        return Uni.createFrom().voidItem();
+                    }
+                    return receipts.markRead(conversationId, reader)
+                            .flatMap(marked -> marked > 0
+                                    ? deliveryChannel.deliver(readReceiptFor(conv, reader)).replaceWithVoid()
+                                    : Uni.createFrom().voidItem());
+                })
+                .onFailure().recoverWithItem(() -> {
+                    log.error("READ_IN handling failed for conv={} reader={}", conversationId, reader);
+                    return null;
+                });
+    }
+
+    /** READ_OUT pushed to the peer (the participant who is not the reader). */
+    private Message readReceiptFor(Conversation conv, String reader) {
+        String peer = reader.equals(conv.clientId()) ? conv.masterId() : conv.clientId();
+        return Message.builder()
+                .type(MessageType.READ_OUT)
+                .conversationId(conv.id())
+                .senderId(reader)        // who read
+                .recipientId(peer)       // notified party (original sender)
+                .messageId("read-" + conv.id() + "-" + reader)
+                .serverTimestamp(System.currentTimeMillis())
+                .build();
     }
 
     @OnError

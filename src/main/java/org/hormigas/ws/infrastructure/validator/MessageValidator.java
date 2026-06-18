@@ -112,7 +112,7 @@ public class MessageValidator implements Validator<Message> {
         }
 
         switch (msg.getType()) {
-            case CHAT_IN, SIGNAL_IN, CHAT_ACK -> {
+            case CHAT_IN, SIGNAL_IN, CHAT_ACK, READ_IN -> {
                 // allowed
             }
             default -> errors.add("type: unsupported inbound message type: " + msg.getType());
@@ -187,10 +187,9 @@ public class MessageValidator implements Validator<Message> {
     /* ============================================================ */
 
     private void validatePayload(Message msg, List<String> errors) {
-        // A delivery ACK carries no payload — it references the delivered message via correlationId
-        // (+ ackId). Requiring a payload here would (silently) reject every client ACK, leaving the
-        // watermark to advance only on disconnect.
-        if (msg.getType() == MessageType.CHAT_ACK) {
+        // A delivery ACK / read receipt carries no payload — it references the conversation/message
+        // via ids. Requiring a payload here would (silently) reject every client ACK and read event.
+        if (msg.getType() == MessageType.CHAT_ACK || msg.getType() == MessageType.READ_IN) {
             return;
         }
 

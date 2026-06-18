@@ -58,6 +58,33 @@ class MessageValidatorTest {
     }
 
     @Test
+    void chatAckWithoutPayloadShouldPass() {
+        Message ack = baseValidMessage().toBuilder()
+                .type(MessageType.CHAT_ACK)
+                .correlationId("delivered-msg-1")
+                .payload(null)
+                .build();
+        assertTrue(validator.validate(ack).isValid());
+    }
+
+    @Test
+    void readInWithoutPayloadShouldPass() {
+        Message read = baseValidMessage().toBuilder()
+                .type(MessageType.READ_IN)
+                .payload(null)
+                .build();
+        assertTrue(validator.validate(read).isValid());
+    }
+
+    @Test
+    void chatInWithoutPayloadShouldStillFail() {
+        Message msg = baseValidMessage().toBuilder().payload(null).build();
+        ValidationResult r = validator.validate(msg);
+        assertFalse(r.isValid());
+        assertTrue(r.errors().stream().anyMatch(e -> e.contains("payload: must not be null")));
+    }
+
+    @Test
     void selfMessagingShouldFail() {
         Message msg = baseValidMessage().toBuilder().recipientId("senderA").build();
         ValidationResult r = validator.validate(msg);
