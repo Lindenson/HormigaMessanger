@@ -5,9 +5,9 @@ Prod-path orchestration first (all currently 0% line). Plain JUnit5 + Mockito wh
 - [x] T1 — `core.router.pipeline.MessagePipelineResolver` (0%) — type→PipelineType mapping + null/unknown → SKIP
 - [x] T2 — `core.router.context.InboundPrototype` (0%) — messageId regen, correlationId rule, type switch, serverTs
 - [x] T3 — `core.garbage.collector.OutboxGarbageCollector` (0%) — primed→compute→collect; unprimed→rehydrate first; failure→0
-- [ ] T4 — `core.poller.outbox.OutboxPoller` (0%) — skip-when-queue-not-empty, fetch+publish, batch-size metric
-- [ ] T5 — `core.router.concurency.PipelineMerger` (0%) — runParallel merges stage results into ctx
-- [ ] T6 — `core.session.LocalSessionRegistry` (0%) — register/deregister, multi-conn set, streamByClientId, single-session
+- [x] T4 — `core.poller.outbox.OutboxPoller` (0%) — skip-when-queue-not-empty, fetch+publish, batch-size metric
+- [x] T5 — `core.router.concurency.PipelineMerger` (0%) — runParallel merges stage results into ctx
+- [x] T6 — `core.session.LocalSessionRegistry` (0%) — register/deregister, multi-conn set, streamByClientId, single-session
 - [ ] T7 — `core.credits.lazy.LazyCreditsBuket` (0%) — token bucket consume/refill/cap
 - [ ] T8 — `core.credits.filter.InboundMessageFilter` (0%) — credit predicate gating
 - [ ] T9 — `core.feedback.regulator.FeedbackRegulator` (0%) — adaptive interval up/down/bounds
