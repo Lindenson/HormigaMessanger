@@ -75,4 +75,5 @@ public interface OutboxRepository {
     Uni<Integer> deleteProcessedByIds(List<String> ids);
     Uni<List<Inserted>> insertHistoryAndOutboxTransactional(List<HistoryRow> historyRows, List<OutboxMessage> outboxBatch);
     Uni<Integer> deleteOlderThan(long idThreshold);
+    Uni<java.util.Map<String, List<Long>>> pendingByRecipient();
 }

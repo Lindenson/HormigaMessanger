@@ -67,4 +67,10 @@ public class OutboxManagerInMemory implements OutboxManager<Message> {
             return collected;
         });
     }
+
+    @Override
+    public Uni<java.util.Map<String, List<Long>>> pendingByRecipient() {
+        // In-memory outbox is not the durable rehydration source; recovery is a Postgres concern.
+        return Uni.createFrom().item(java.util.Map.of());
+    }
 }

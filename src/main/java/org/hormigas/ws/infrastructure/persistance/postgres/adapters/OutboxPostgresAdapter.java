@@ -148,6 +148,12 @@ public class OutboxPostgresAdapter implements OutboxManager<Message> {
                 });
     }
 
+    @Override
+    public Uni<java.util.Map<String, List<Long>>> pendingByRecipient() {
+        return repo.pendingByRecipient()
+                .onFailure().recoverWithItem(java.util.Map.of());
+    }
+
     // ----------------------------------------------------------------------
     // Minimal validation for save
     // ----------------------------------------------------------------------

@@ -52,6 +52,7 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
     private static final String GLOBAL_MIN_KEY = "tetris:minids";
     private static final String COUNTS_KEY = "tetris:re:cnt";
     private static final String LAST_ID_KEY = "tetris:lastid";
+    private static final String PRIMED_KEY = "tetris:primed";
 
     @Inject
     RedisAPI redis;
@@ -69,9 +70,14 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
             local lastk = KEYS[4]
             local msg = tonumber(ARGV[1])
             local client = ARGV[2]
-            
-            redis.call('ZADD', per, msg, tostring(msg))
-            redis.call('HINCRBY', counts, client, 1)
+
+            -- ZADD (no flags) returns the count of NEWLY added members; onSent runs more than once
+            -- per message (inbound persist + every outbox re-delivery), so only count a genuinely
+            -- new pending id — otherwise HINCRBY drifts the per-client counter upward.
+            local added = redis.call('ZADD', per, msg, tostring(msg))
+            if added == 1 then
+                redis.call('HINCRBY', counts, client, 1)
+            end
             redis.call('SET', lastk, tostring(msg))
             
             local minMember = redis.call('ZRANGE', per, 0, 0)
@@ -401,6 +407,51 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
         }
     }
 
+
+    @Override
+    public Uni<Boolean> isPrimed() {
+        return redis.exists(List.of(PRIMED_KEY))
+                .map(r -> r != null && r.toInteger() == 1)
+                .onFailure().recoverWithItem(false);
+    }
+
+    @Override
+    public Uni<Void> rehydrate(java.util.Map<String, List<Long>> pendingByRecipient) {
+        // isPrimed() == false implies the state was wiped (cold start / flush), so the keys below
+        // are empty — we rebuild them with absolute writes (no pre-delete, no races between keys).
+        List<Uni<io.vertx.mutiny.redis.client.Response>> ops = new ArrayList<>();
+        long maxAll = -1;
+        for (var e : pendingByRecipient.entrySet()) {
+            String rid = e.getKey();
+            List<Long> ids = e.getValue();
+            if (rid == null || ids == null || ids.isEmpty()) continue;
+
+            List<String> zadd = new ArrayList<>();
+            zadd.add(recipientKey(rid) + ACKS_SUFFIX);
+            long min = Long.MAX_VALUE;
+            for (Long id : ids) {
+                if (id == null) continue;
+                zadd.add(String.valueOf(id)); // score
+                zadd.add(String.valueOf(id)); // member
+                if (id < min) min = id;
+                if (id > maxAll) maxAll = id;
+            }
+            if (zadd.size() <= 1) continue;
+            ops.add(redis.zadd(zadd));
+            ops.add(redis.hset(List.of(COUNTS_KEY, rid, String.valueOf(ids.size()))));
+            if (min != 0 && min != Long.MAX_VALUE) {
+                ops.add(redis.zadd(List.of(GLOBAL_MIN_KEY, String.valueOf(min), rid)));
+            }
+        }
+        if (maxAll >= 0) ops.add(redis.set(List.of(LAST_ID_KEY, String.valueOf(maxAll))));
+        // primed last — only meaningful once the pending state above is in place
+        ops.add(redis.set(List.of(PRIMED_KEY, "1")));
+
+        log.info("Rehydrating Tetris from outbox: {} recipients, lastId={}", pendingByRecipient.size(), maxAll);
+        return Uni.join().all(ops).andCollectFailures().replaceWithVoid()
+                .onFailure().invoke(err -> log.error("Tetris rehydrate failed", err))
+                .onFailure().recoverWithUni(Uni.createFrom().voidItem());
+    }
 
     private String recipientKey(String id) {
         return RECIPIENT_KEY_PREFIX + id;
