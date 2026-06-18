@@ -8,11 +8,11 @@ Prod-path orchestration first (all currently 0% line). Plain JUnit5 + Mockito wh
 - [x] T4 — `core.poller.outbox.OutboxPoller` (0%) — skip-when-queue-not-empty, fetch+publish, batch-size metric
 - [x] T5 — `core.router.concurency.PipelineMerger` (0%) — runParallel merges stage results into ctx
 - [x] T6 — `core.session.LocalSessionRegistry` (0%) — register/deregister, multi-conn set, streamByClientId, single-session
-- [ ] T7 — `core.credits.lazy.LazyCreditsBuket` (0%) — token bucket consume/refill/cap
-- [ ] T8 — `core.credits.filter.InboundMessageFilter` (0%) — credit predicate gating
-- [ ] T9 — `core.feedback.regulator.FeedbackRegulator` (0%) — adaptive interval up/down/bounds
-- [ ] T10 — `core.watermark.tetris.TetrisWatermark` (0%) — onDisconnect delegate + recover
-- [ ] T11 — `scheduler.HistoryRetentionScheduler` (0%) — purge(normalCutoff, frozenCutoff) sums both sweeps
+- [x] T7 — `core.credits.lazy.LazyCreditsBuket` (0%) — token bucket consume/refill/cap
+- [x] T8 — `core.credits.filter.InboundMessageFilter` (0%) — credit predicate gating
+- [x] T9 — `core.feedback.regulator.FeedbackRegulator` (0%) — adaptive interval up/down/bounds
+- [x] T10 — `core.watermark.tetris.TetrisWatermark` (0%) — onDisconnect delegate + recover
+- [x] T11 — `scheduler.HistoryRetentionScheduler` (0%) — purge(normalCutoff, frozenCutoff) sums both sweeps
 - [ ] T12 — `infrastructure.websocket.coordinator.PresenceCoordinator` (0%) — join/leave/evict prior session
 - [ ] T13 — `core.router.stage.stages.OutboxStage` (0%)
 - [ ] T14 — `core.router.stage.stages.AckStage` (0%)
