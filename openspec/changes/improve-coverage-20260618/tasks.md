@@ -13,10 +13,10 @@ Prod-path orchestration first (all currently 0% line). Plain JUnit5 + Mockito wh
 - [x] T9 — `core.feedback.regulator.FeedbackRegulator` (0%) — adaptive interval up/down/bounds
 - [x] T10 — `core.watermark.tetris.TetrisWatermark` (0%) — onDisconnect delegate + recover
 - [x] T11 — `scheduler.HistoryRetentionScheduler` (0%) — purge(normalCutoff, frozenCutoff) sums both sweeps
-- [ ] T12 — `infrastructure.websocket.coordinator.PresenceCoordinator` (0%) — join/leave/evict prior session
-- [ ] T13 — `core.router.stage.stages.OutboxStage` (0%)
-- [ ] T14 — `core.router.stage.stages.AckStage` (0%)
-- [ ] T15 — `core.router.stage.stages.DeliveryStage` (0%) — canDeliver gating, persisted-fail skip
+- [x] T12 — `infrastructure.websocket.coordinator.PresenceCoordinator` (0%) — join/leave/evict prior session
+- [x] T13 — `core.router.stage.stages.OutboxStage` (0%)
+- [x] T14 — `core.router.stage.stages.AckStage` (0%)
+- [x] T15 — `core.router.stage.stages.DeliveryStage` (0%) — canDeliver gating, persisted-fail skip
 
 Follow-up (next round): remaining stages (Cache/CleanCache/Final/TetrisSent/TetrisAck),
 MessageInboundRouter/MessageOutboundRouter, ChatResource/WebsocketService unit, alt-profile
