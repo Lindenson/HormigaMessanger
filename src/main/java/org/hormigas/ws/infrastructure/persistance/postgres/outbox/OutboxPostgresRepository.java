@@ -246,6 +246,22 @@ public class OutboxPostgresRepository implements OutboxRepository {
                 .onItem().transform(SqlResult::rowCount);
     }
 
+    @Override
+    public Uni<java.util.Map<String, List<Long>>> pendingByRecipient() {
+        // Every still-buffered row is a not-yet-collected (pending) message; the outbox is the
+        // durable source of truth used to rehydrate the Tetris safe-delete state after loss.
+        return client.query("SELECT recipient_id, id FROM outbox")
+                .execute()
+                .map(rows -> {
+                    java.util.Map<String, List<Long>> byRecipient = new java.util.HashMap<>();
+                    for (Row r : rows) {
+                        byRecipient.computeIfAbsent(r.getString("recipient_id"), k -> new ArrayList<>())
+                                .add(r.getLong("id"));
+                    }
+                    return byRecipient;
+                });
+    }
+
     // ----------------------------------------------------------------------
     // helpers
     // ----------------------------------------------------------------------

@@ -9,7 +9,6 @@ import org.hormigas.ws.config.MessengerConfig;
 import org.hormigas.ws.domain.stage.StageResult;
 import org.hormigas.ws.ports.channel.DeliveryChannel;
 import org.hormigas.ws.ports.idempotency.IdempotencyManager;
-import org.hormigas.ws.ports.message.ReadReceipts;
 import org.hormigas.ws.core.router.context.RouterContext;
 import org.hormigas.ws.core.router.stage.PipelineStage;
 import org.hormigas.ws.domain.message.Message;
@@ -26,7 +25,6 @@ public class DeliveryStage implements PipelineStage<RouterContext<Message>> {
     private final MessengerConfig messengerConfig;
     private final DeliveryChannel<Message> channel;
     private final IdempotencyManager<Message> idempotencyManager;
-    private final ReadReceipts receipts;
 
     private Duration minBackoff;
     private Duration maxBackoff;
@@ -50,23 +48,9 @@ public class DeliveryStage implements PipelineStage<RouterContext<Message>> {
                 .flatMap(canDeliver -> canDeliver ? deliverWithRetry(ctx)
                         : Uni.createFrom().item(StageResult.<Message>skipped()))
                 .onItem().invoke(ctx::setDelivered)
-                .call(result -> markDelivered(ctx.getPayload(), result))
                 .replaceWith(ctx)
                 .onFailure().invoke(ctx::setError)
                 .onFailure().recoverWithItem(ctx);
-    }
-
-    /**
-     * SENT→DELIVERED once a chat message is actually pushed to the recipient (UC-U13, decision #2).
-     * Only on PASSED (genuinely delivered, not SKIPPED/held-offline) and only for CHAT_OUT; the
-     * status write is best-effort and must never fail the delivery.
-     */
-    private Uni<?> markDelivered(Message msg, StageResult<Message> result) {
-        if (msg.getType() != MessageType.CHAT_OUT || !result.isPassed()) {
-            return Uni.createFrom().voidItem();
-        }
-        return receipts.markDelivered(msg.getMessageId())
-                .onFailure().recoverWithItem(0);
     }
 
     private Uni<Boolean> canDeliver(RouterContext<Message> ctx) {

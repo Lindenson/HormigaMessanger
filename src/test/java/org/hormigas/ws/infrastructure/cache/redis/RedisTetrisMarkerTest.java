@@ -362,6 +362,33 @@ public class RedisTetrisMarkerTest {
         assertFalse(heavy.contains(recipient1));
     }
 
+    @Test
+    public void testPrimedFlagAndRehydrateFromOutbox() {
+        // fresh Redis (flushed in setup) → state is not primed
+        assertFalse(tetris.isPrimed().await().indefinitely());
+
+        // rebuild pending state from the durable outbox (recipient → ids)
+        tetris.rehydrate(java.util.Map.of(
+                recipient1, List.of(5L, 6L),
+                recipient2, List.of(9L))).await().indefinitely();
+
+        // now primed, and the safe-delete id is the global min pending (5)
+        assertTrue(tetris.isPrimed().await().indefinitely());
+        assertEquals(5L, tetris.computeGlobalSafeDeleteId().await().indefinitely());
+
+        // an ack on the lowest id advances the boundary to the next pending (6)
+        tetris.onAck(msg(5L, recipient1)).await().indefinitely();
+        assertEquals(6L, tetris.computeGlobalSafeDeleteId().await().indefinitely());
+    }
+
+    @Test
+    public void testNotPrimedAfterStateLoss() {
+        tetris.rehydrate(java.util.Map.of(recipient1, List.of(1L))).await().indefinitely();
+        assertTrue(tetris.isPrimed().await().indefinitely());
+        redis.flushall(List.of()).await().indefinitely();
+        assertFalse(tetris.isPrimed().await().indefinitely(), "flushed Redis must read as unprimed");
+    }
+
     // helper to build Message objects used by tests
     private Message msg(long id, String recipientId) {
         return Message.builder()

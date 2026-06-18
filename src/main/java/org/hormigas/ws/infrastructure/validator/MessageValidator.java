@@ -187,6 +187,13 @@ public class MessageValidator implements Validator<Message> {
     /* ============================================================ */
 
     private void validatePayload(Message msg, List<String> errors) {
+        // A delivery ACK carries no payload — it references the delivered message via correlationId
+        // (+ ackId). Requiring a payload here would (silently) reject every client ACK, leaving the
+        // watermark to advance only on disconnect.
+        if (msg.getType() == MessageType.CHAT_ACK) {
+            return;
+        }
+
         Message.Payload p = msg.getPayload();
 
         if (p == null) {

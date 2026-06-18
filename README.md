@@ -101,6 +101,10 @@ Each message kind maps to one of four **handling strategies** (orthogonal proper
 | **C — retry-then-purge** | transient (outbox) | yes | yes | no | must-arrive system notices |
 | **S — signaling** | no (transient) | yes | yes | no | **WebRTC** call setup |
 
+> Implemented today: **A** (chat) and **S** (signaling routes). **B** covers presence. **C**
+> (retry-then-purge for system notices) is **specified but not yet a distinct pipeline** — it shares
+> the cached path with S until its own retention semantics are wired.
+
 ### Wire `MessageType` values
 
 ```
@@ -120,7 +124,9 @@ own id travels as `correlationId` for ACK matching and frontend dedup.
 Persisted status machine: **`SENT → DELIVERED → READ`**.
 
 - **SENT** — message durably written (History + Outbox in one transaction) and ACKed to the sender.
-- **DELIVERED** — set the moment the message is actually pushed to the recipient over WS.
+- **DELIVERED** — set when the **recipient sends a delivery ACK** (`CHAT_ACK`, `correlationId` = the
+  delivered messageId). A WS push is best-effort, so DELIVERED is ACK-confirmed, not push-assumed. The
+  same ACK advances the GC watermark.
 - **READ** — persisted when the recipient acknowledges via `POST /api/chats/{id}/read`.
 
 ### Persistent (Strategy A) happy path
@@ -159,6 +165,26 @@ Persisted status machine: **`SENT → DELIVERED → READ`**.
    **not** guaranteed — the **frontend dedups by `messageId`**.
 4. **Read receipts** persisted (`SENT → DELIVERED → READ`).
 5. **Per-conversation ordering** — *targeted; not yet implemented* (see Roadmap).
+6. **Single active session per user.** A new WS connection for a client evicts the previous one
+   (clean takeover). Multi-device is out of scope for v1 (per-client ACK/watermark/ordering).
+
+### 📐 Delivery contract & invariants
+
+The system is **no-loss with at-least-once delivery**, not live-push-guaranteed. Precisely:
+
+- **`message_history` is the single source of truth** and never loses a message within its retention
+  TTL (frozen messages get a longer class). The **Outbox is a transient delivery buffer** and *may*
+  drop a message before an offline recipient ever receives it live.
+- History and Outbox rows are written in **one transaction**, so anything in the Outbox is already in
+  History (`persist → visible via REST → eligible for GC`, in that order).
+- **GC deletes `outbox WHERE id < safe`**, where `safe` is the lowest *un-ACKed* id; the pending row
+  itself is never deleted. The safe boundary advances on a **recipient ACK** *or* on **disconnect**
+  (an offline client's pending rows become collectable — they remain in History).
+- A client is treated as **offline** by the GC on connection close / ACK; presence (Redis) gates only
+  *live delivery attempts*. A network glitch may cause a transient false-offline, which is safe: data
+  stays in History and the client recovers via REST on reconnect.
+- **On (re)connect the client pulls history via REST, then resumes WS.** No message is lost across
+  the gap; duplicates are possible (REST page + live), so the **client dedups by `messageId`**.
 
 ---
 
@@ -201,10 +227,15 @@ export to **Prometheus** (`/q/metrics`).
   `UPDATE outbox … FROM (SELECT id … WHERE lease_until <= now() ORDER BY id LIMIT n FOR UPDATE SKIP LOCKED) … RETURNING …` —
   so multiple instances never process the same row, with a single round-trip per poll.
 - **"Tetris" watermark GC.** Per-recipient ACK ranges are merged in **Redis** (ZSETs + atomic **Lua**
-  scripts) to compute the **global safe-delete id**; the GC deletes Outbox rows ≤ that id. History is
+  scripts) to compute the **global safe-delete id**; the GC deletes `outbox WHERE id < safe`. History is
   retained per TTL. Scripts run via `EVALSHA` with a **`NOSCRIPT` fallback** (survives a Redis
   restart); startup cleanup uses `SCAN` + `UNLINK` (never the blocking `KEYS`). See
   [Appendix A](#-appendix-a--tetris-ackgc-model).
+- **Redis is a rebuildable cache; the Outbox is the durable truth.** The Tetris state can be lost
+  (flush / cold start) without data loss: the GC is **gated on a `tetris:primed` flag** and, when
+  unprimed, **rehydrates the pending set from the Outbox** (`recipientId → row ids`) before computing
+  `safe`. So GC can never advance past — and prematurely trim — undelivered rows the cache has
+  forgotten. (A Redis cluster makes loss rare; rehydration makes it safe regardless.)
 
 ---
 
@@ -213,11 +244,14 @@ export to **Prometheus** (`/q/metrics`).
 Presence is a **correctness dependency of GC**: the watermark advances on delivery, which requires
 the recipient to be *accurately* online — a phantom-online client stalls GC. Therefore:
 
-- **Presence (Redis)** tracks who is connected and gates live delivery (offline → hold in Outbox).
-  Online/offline transitions are ephemeral (Strategy B) events to the peer.
+- **Presence (Redis)** gates *live delivery attempts* (offline → hold in Outbox); it is **not** the
+  GC's source of truth. The GC watermark advances on a **recipient ACK** or on **connection close**.
 - **Mark OFFLINE on delivery failure** — if a live push to an open session fails, the recipient is
   transitioned OFFLINE so the poller stops phantom-online retries and simply holds in Outbox.
-- **Heartbeat / ping** — WebSocket auto-ping detects dead connections; stale sessions are cleaned up.
+- **Heartbeat / ping → reap.** The server auto-pings; a live client's `pong` refreshes its activity
+  (`@OnPongMessage`). A connection that stops responding past `processing.session.idle-timeout-ms`
+  (default 35 s) is **force-closed** by the liveness reaper → `@OnClose` → presence/watermark cleanup.
+  This keeps presence honest and prevents phantom-online GC stalls.
 
 ---
 
@@ -345,17 +379,18 @@ group; `@wip` scenarios are excluded from the default run:
 cd e2etests && JAVA_HOME=/path/to/jdk-21 mvn test -Dkarate.env=dev
 ```
 
-Current coverage: **154 unit/integration tests + 17 Karate scenarios**, all green.
+Current coverage: **156 unit/integration tests + 17 Karate scenarios**, all green.
 
 ---
 
 ## ✅ Status vs functional requirements
 
 **Implemented & tested:** chat lifecycle (idempotent create, list, soft-delete, blacklist),
-send-guard + `SENT` ACK, online delivery + offline hold, `SENT→DELIVERED→READ` + read receipts,
-immutability + conditional delete + **order-scoped freeze**, frozen retention class (primitive),
-presence + **offline-on-delivery-failure**, watermark GC, **cursor-paginated** reconnect history,
-Ory auth + membership authorization, opaque metadata + tz timestamps.
+send-guard + `SENT` ACK, online delivery + offline hold, **ACK-driven `SENT→DELIVERED→READ`** + read
+receipts, immutability + conditional delete + **order-scoped freeze**, frozen retention class
+(primitive), presence + **offline-on-delivery-failure** + **heartbeat/pong reaper** (FR-PRES-03),
+watermark GC + **outbox-rehydration on Redis loss**, **single-active-session**, **cursor-paginated**
+reconnect history, Ory auth + membership authorization, opaque metadata + tz timestamps.
 
 **Partial / deferred:**
 
@@ -364,6 +399,7 @@ Ory auth + membership authorization, opaque metadata + tz timestamps.
   deferred; REST side is live.
 - 🟡 **Read-receipt push to sender** (FR-MSG-06) — status is persisted & polled; no push yet.
 - 🟡 **Retention scheduler** (FR-RET-04/05) — primitives exist, not yet scheduled.
+- 🟡 **Strategy C** (retry-then-purge) — not a distinct pipeline yet (shares the cached path).
 - 🟡 **WebRTC signaling** (FR-SIG) — pipeline routes exist, no e2e test.
 - ⚪ **Credit rate-limiting** (FR-SEC-03) — optional v1, deferred.
 - ⚪ **Attachments** (MinIO two-phase upload) — designed, not built.

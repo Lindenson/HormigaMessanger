@@ -56,4 +56,9 @@ public class OutboxManagerInMemoryBatched implements OutboxManager<Message> {
     public Uni<Integer> collectGarbage(Long from) {
         return delegate.collectGarbage(from);
     }
+
+    @Override
+    public Uni<java.util.Map<String, List<Long>>> pendingByRecipient() {
+        return delegate.pendingByRecipient();
+    }
 }

@@ -137,32 +137,39 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     * def now = java.lang.System.currentTimeMillis()
     * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"read-' + uid + '"}}'
     * masterSock.send(msg)
-    # client is online → the message is delivered, so status advances SENT→DELIVERED (UC-U13)
     * eval java.lang.Thread.sleep(1500)
+    # before any client ACK the persisted status is SENT (DELIVERED is ACK-driven, not push-driven)
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    When method GET
+    Then status 200
+    * def sid = response[0].messageId
+    Given path '/api/chats', convId, 'receipts'
+    And headers cHdr
+    When method GET
+    Then status 200
+    And match response[*].status == ['SENT']
+    # the recipient sends a delivery ACK over WS (correlationId = delivered messageId) → DELIVERED (UC-U13)
+    * def ack = '{"type":"CHAT_ACK","senderId":"' + cId + '","recipientId":"' + mId + '","conversationId":"' + convId + '","messageId":"ack-' + uid + '","correlationId":"' + sid + '","ackId":1,"senderTimestamp":' + now + ',"senderTimezone":"UTC"}'
+    * clientSock.send(ack)
+    * eval java.lang.Thread.sleep(1200)
     Given path '/api/chats', convId, 'receipts'
     And headers cHdr
     When method GET
     Then status 200
     And match response[*].status contains 'DELIVERED'
-    # the recipient (client) acknowledges — exactly one message addressed to them is marked READ
+    # the recipient (client) reads — exactly one message addressed to them is marked READ (UC-U14)
     Given path '/api/chats', convId, 'read'
     And headers cHdr
     When method POST
     Then status 200
     And match response.read == 1
-    # per-message status reads back as READ (UC-U14)
     Given path '/api/chats', convId, 'receipts'
     And headers cHdr
     When method GET
     Then status 200
     And match response[*].status contains 'READ'
-    # acknowledging again is idempotent — nothing new to mark
-    Given path '/api/chats', convId, 'read'
-    And headers cHdr
-    When method POST
-    Then status 200
-    And match response.read == 0
-    # acknowledging again is idempotent — nothing new to mark
+    # reading again is idempotent — nothing new to mark
     Given path '/api/chats', convId, 'read'
     And headers cHdr
     When method POST
