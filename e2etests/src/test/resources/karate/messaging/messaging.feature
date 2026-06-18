@@ -245,3 +245,34 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     When method GET
     Then status 200
     And match response == '#[1]'
+
+  Scenario: UC-U12 — a message to an OFFLINE recipient is held (no-loss) and recovered on reconnect
+    # The recipient is never online at send time. Per the durability backbone, an offline recipient
+    # recovers by pulling conversation history via REST on reconnect; live WS re-push by the outbox
+    # poller is a best-effort optimization on top (and exercised by UC-U10/U11).
+    * def body = 'offline-' + uid
+    * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })
+    * eval java.lang.Thread.sleep(1000)
+    * def now = java.lang.System.currentTimeMillis()
+    * def msg = '{"type":"CHAT_IN","senderId":"' + mId + '","recipientId":"' + cId + '","conversationId":"' + convId + '","messageId":"' + uid + '","senderTimestamp":' + now + ',"senderTimezone":"UTC","payload":{"kind":"text","body":"' + body + '"}}'
+    * masterSock.send(msg)
+    # live delivery is skipped (recipient offline); the message is persisted and held — never dropped
+    * eval java.lang.Thread.sleep(1500)
+    # the offline recipient loses nothing: the message is durable and retrievable
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    When method GET
+    Then status 200
+    And match response[*].payload.body contains body
+    * def serverId = response[0].messageId
+    # the client comes ONLINE and resumes a live WS session (presence online)
+    * def clientSock = karate.webSocket(wsUrl, null, { headers: cHdr })
+    * eval java.lang.Thread.sleep(1200)
+    # on reconnect it syncs history from its cursor and recovers exactly the held message
+    Given path '/api/chats', convId, 'messages'
+    And headers cHdr
+    And param since = ''
+    When method GET
+    Then status 200
+    And match response[*].messageId contains serverId
+    And match response[*].payload.body contains body
