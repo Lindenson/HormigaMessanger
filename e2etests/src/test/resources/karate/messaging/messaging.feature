@@ -246,6 +246,16 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     Then status 200
     And match response == '#[1]'
 
+  Scenario: UC-U40 — a connected client is tracked as present
+    * def sock = karate.webSocket(wsUrl, null, { headers: cHdr })
+    * eval java.lang.Thread.sleep(1200)
+    Given path '/api/presence'
+    And headers cHdr
+    When method GET
+    Then status 200
+    * def presenceJson = karate.toString(response)
+    * match presenceJson contains cId
+
   Scenario: UC-U12 — a message to an OFFLINE recipient is held (no-loss) and recovered on reconnect
     # The recipient is never online at send time. Per the durability backbone, an offline recipient
     # recovers by pulling conversation history via REST on reconnect; live WS re-push by the outbox
