@@ -22,3 +22,18 @@ ordering and performance refactors, so it must have a unit safety net first.
 - Backpressure publishers/metrics, loggers, DTO/records/enums (Lombok/trivial).
 - Karate e2e (handled separately).
 - Coverage thresholds in pom.xml.
+
+## Result (completed 2026-06-18)
+Coverage: **34.5% → 58.1% line, 31.5% → 49.7% branch** overall; **76.9% line on the
+prod-path** (excl. alt-profile in-memory impls + plumbing). 159 → 266 tests, all green.
+Covered this run: pipeline resolver/routers/all 8 stages, InboundPrototype, PipelineMerger,
+OutboxPoller, OutboxGarbageCollector (rehydrate gate), LocalSessionRegistry, credits
+(bucket+filter), FeedbackRegulator, TetrisWatermark, retention + liveness schedulers,
+PresenceCoordinator, ChatResource (REST).
+
+## Deferred to a follow-up round (low prod value)
+- Alt-profile `memory`-storage impls (~360 lines, not used in prod): OutboxManagerInMemory,
+  InMemoryMessageHistory, *ConcurrentInsertionOrderMap, TimeOrderedStringKeyMap, OutboxBatchBuffer,
+  IdempotencyManagerInMemory. (Candidate for deletion as dead code rather than testing.)
+- WebsocketService (@WebSocket — covered functionally by the 18 Karate e2e scenarios).
+- Backpressure publishers/metrics, router loggers, thin Async* wrappers, DTO/records.
