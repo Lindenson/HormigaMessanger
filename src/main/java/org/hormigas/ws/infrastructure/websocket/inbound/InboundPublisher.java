@@ -13,9 +13,8 @@ import org.hormigas.ws.core.backpressure.BackpressurePublisher;
 import org.hormigas.ws.config.MessengerConfig;
 import org.hormigas.ws.core.router.InboundRouter;
 import org.hormigas.ws.domain.message.Message;
-import org.hormigas.ws.core.feedback.provider.InEventProvider;
-import org.hormigas.ws.core.feedback.events.IncomingHealthEvent;
 
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -38,9 +37,6 @@ public class InboundPublisher implements BackpressurePublisher<Message> {
     @Inject
     MeterRegistry meterRegistry;
 
-    @Inject
-    InEventProvider<IncomingHealthEvent> eventProvider;
-
     private IncommingPublisherMetrics metrics;
 
     private final AtomicReference<MultiEmitter<? super Message>> emitter = new AtomicReference<>();
@@ -50,7 +46,7 @@ public class InboundPublisher implements BackpressurePublisher<Message> {
     @PostConstruct
     void init() {
 
-        metrics = new IncommingPublisherMetrics(meterRegistry, eventProvider);
+        metrics = new IncommingPublisherMetrics(meterRegistry);
 
         WithBackpressure.<Message, IncommingPublisherMetrics>builder()
                 .withPublisherKind(INCOMING)
@@ -60,30 +56,31 @@ public class InboundPublisher implements BackpressurePublisher<Message> {
                 .withMetrics(metrics)
                 .withMode(SEQUENTIAL)
                 .build()
+                // F2: a terminal stream error must not permanently disable the publisher — re-subscribe
+                // with backoff (the emitter consumer resets the counter on each (re)subscribe).
+                .onFailure().invoke(f -> Log.error("Incoming publisher stream failed — retrying", f))
+                .onFailure().retry().withBackOff(Duration.ofMillis(200), Duration.ofSeconds(5)).indefinitely()
                 .subscribe().with(
                         ignored -> Log.debug("Publishing incoming messages!"),
-                        failure -> {
-                            metrics.resetQueueSize();
-                            queueSize.set(0);
-                            Log.error("Incoming publisher terminated unexpectedly", failure);
-                        }
+                        failure -> Log.error("Incoming publisher terminated (retries exhausted)", failure)
                 );
         ready.set(true);
     }
 
     @Override
-    public void publish(Message msg) {
+    public boolean publish(Message msg) {
         if (!ready.get()) {
             Log.warn("Incoming publisher not initialized");
-            return;
+            return false;
         }
         if (queueIsFull()) {
             metrics.recordDropped();
             Log.warn("Incoming message dropped due to limit");
-            return;
+            return false;
         }
         Log.debug("Incoming message was published");
         emitter.get().emit(msg);
+        return true;
     }
 
     @Override

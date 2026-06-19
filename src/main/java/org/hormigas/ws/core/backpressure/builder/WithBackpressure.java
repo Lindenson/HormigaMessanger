@@ -75,13 +75,20 @@ public class WithBackpressure<T, M extends PublisherMetrics> implements Backpres
 
         var publisher = PublisherFactory.create(kind, sink, metrics, size);
 
+        // Reset the in-flight counter whenever the stream is (re)subscribed — keeps it consistent with
+        // an empty buffer after a restart/retry (F6: no counter drift on re-subscribe).
+        java.util.function.Consumer<MultiEmitter<? super T>> onSubscribe = em -> {
+            size.set(0);
+            emitter.set(em);
+        };
+
         return switch (mode) {
             case PARALLEL -> Multi.createFrom()
-                    .<T>emitter(em -> emitter.set(em), BackPressureStrategy.BUFFER)
+                    .<T>emitter(onSubscribe, BackPressureStrategy.BUFFER)
                     .onOverflow().bufferUnconditionally()
                     .onItem().transformToUniAndMerge(publisher::publishMessage);
             case SEQUENTIAL -> Multi.createFrom()
-                    .<T>emitter(em -> emitter.set(em), BackPressureStrategy.BUFFER)
+                    .<T>emitter(onSubscribe, BackPressureStrategy.BUFFER)
                     .onOverflow().bufferUnconditionally()
                     .onItem().transformToUniAndConcatenate(publisher::publishMessage);
         };

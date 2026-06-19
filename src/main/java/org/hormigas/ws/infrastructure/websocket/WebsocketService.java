@@ -111,7 +111,11 @@ public class WebsocketService {
                 return conversations.canSend(message.getConversationId(), sender)
                         .map(check -> {
                             if (check == ConversationService.SendCheck.ALLOW) {
-                                incomingPublisher.publish(message);
+                                // F3: a persistent message dropped at ingress (queue full) must not be
+                                // silently lost — tell the sender so it can retry.
+                                if (!incomingPublisher.publish(message)) {
+                                    notifyOverloaded(connection, message);
+                                }
                             } else {
                                 log.warn("CHAT message {} rejected ({}) conv={} sender={}",
                                         message.getMessageId(), check, message.getConversationId(), sender);
@@ -131,11 +135,30 @@ public class WebsocketService {
                 return markReadAndNotify(message.getConversationId(), clientSession.getClientId());
             }
 
-            incomingPublisher.publish(message);
+            if (!incomingPublisher.publish(message)) {
+                notifyOverloaded(connection, message);
+            }
         } catch (Exception e) {
             log.error("Invalid message format: {}", rawJson, e);
         }
         return Uni.createFrom().voidItem();
+    }
+
+    /**
+     * Tell the sender its message was rejected at ingress (queue full / overload) so it can retry —
+     * a SERVICE_OUT carrying the rejected messageId as correlationId. Fire-and-forget (UC-H08).
+     */
+    private void notifyOverloaded(WebSocketConnection connection, Message rejected) {
+        Message notice = Message.builder()
+                .type(MessageType.SERVICE_OUT)
+                .correlationId(rejected.getMessageId())
+                .payload(Message.Payload.builder().kind("event").body("overloaded").build())
+                .serverTimestamp(System.currentTimeMillis())
+                .build();
+        webSocketUtils.encodeMessage(notice).ifPresent(json ->
+                connection.sendText(json).subscribe().with(
+                        x -> {},
+                        e -> log.debug("Failed to send overload notice: {}", e.getMessage())));
     }
 
     private Uni<Void> markReadAndNotify(String conversationId, String reader) {

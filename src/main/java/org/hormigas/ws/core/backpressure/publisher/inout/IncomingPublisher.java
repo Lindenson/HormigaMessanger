@@ -21,9 +21,11 @@ public class IncomingPublisher<T, M extends PublisherMetrics>
 
     @Override
     public Uni<Void> publishMessage(T msg) {
+        long start = System.nanoTime();
         return getSink().apply(msg)
                 .onItem().invoke(processed -> {
                     if (processed.isProcessed()) {
+                        getMetrics().recordProcessingTime(System.nanoTime() - start);
                         getMetrics().recordDone();
                         log.debug("Incoming message processed");
                     }

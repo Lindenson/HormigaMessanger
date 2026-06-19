@@ -55,9 +55,10 @@
         queue-size: 5000
         polling-ms: "1000ms"
       feedback:
-        additional-ms: 1000 # for polling-ms
-        adjustment-factor: 0.9
-        recovery-factor: 1.05
+        additional-ms: 1000   # base added poll delay
+        adjustment-factor: 2.0 # growth on drops (>1 → slow down under overload)
+        recovery-factor: 0.5   # decay toward base when stable (<1)
+        max-ms: 30000          # cap on the added delay
       channel:
         retry: true
         min-backoff-ms: 300

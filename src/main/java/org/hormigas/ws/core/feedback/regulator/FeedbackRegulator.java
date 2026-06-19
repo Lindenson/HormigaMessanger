@@ -15,9 +15,13 @@ import java.util.concurrent.atomic.AtomicLong;
 @Slf4j
 @ApplicationScoped
 public class FeedbackRegulator implements Regulator {
+    // Adaptive added-delay for the outbox poller. Correct backpressure direction (F4): on drops the
+    // poller must SLOW DOWN (grow the interval, capped at maxIntervalMs); when stable it eases back
+    // DOWN toward the base interval. Config: growthFactor > 1, decayFactor < 1.
     private long baseIntervalMs;
-    private double adjustmentFactor;
-    private double recoveryFactor;
+    private long maxIntervalMs;
+    private double growthFactor;
+    private double decayFactor;
     private final AtomicLong currentIntervalMs = new AtomicLong();
 
     @Inject
@@ -25,21 +29,24 @@ public class FeedbackRegulator implements Regulator {
 
     @PostConstruct
     public void init() {
-        adjustmentFactor = messengerConfig.feedback().adjustmentFactor();
+        growthFactor = messengerConfig.feedback().adjustmentFactor();
         baseIntervalMs = messengerConfig.feedback().additionalMs();
-        recoveryFactor = messengerConfig.feedback().recoveryFactor();
+        decayFactor = messengerConfig.feedback().recoveryFactor();
+        maxIntervalMs = messengerConfig.feedback().maxMs();
         currentIntervalMs.set(baseIntervalMs);
     }
 
     public void onHealthEvent(@ObservesAsync OutgoingHealthEvent event) {
         if (event.droppedDetected()) {
-            long newInterval = Math.max(100, (long) (currentIntervalMs.get() * adjustmentFactor));
+            // slow down — grow the interval, capped
+            long newInterval = Math.min(maxIntervalMs, (long) (currentIntervalMs.get() * growthFactor));
             currentIntervalMs.set(newInterval);
-            log.warn("⚠️ Drops detected! Adjusting outbox interval to {} ms", newInterval);
+            log.warn("⚠️ Drops detected — slowing outbox poll to {} ms", newInterval);
         } else {
-            long newInterval = Math.min(baseIntervalMs, (long) (currentIntervalMs.get() * recoveryFactor));
+            // ease back down toward the base interval
+            long newInterval = Math.max(baseIntervalMs, (long) (currentIntervalMs.get() * decayFactor));
             currentIntervalMs.set(newInterval);
-            log.warn("✅ Stable. Restoring interval to {} ms", newInterval);
+            log.debug("✅ Stable — easing outbox poll back to {} ms", newInterval);
         }
     }
 

@@ -28,6 +28,7 @@ public interface MessengerConfig {
         int additionalMs();
         double adjustmentFactor();
         double recoveryFactor();
+        int maxMs();
     }
 
     interface Channel {

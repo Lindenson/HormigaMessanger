@@ -58,30 +58,31 @@ public class RoutingBackpressurePublisher implements BackpressurePublisher<Messa
                 .withEmitter(emitter)
                 .withMode(SEQUENTIAL)
                 .build()
+                // F2: re-subscribe with backoff on a terminal stream error (emitter consumer resets the
+                // counter on each (re)subscribe) — a single fault must not kill delivery for the JVM.
+                .onFailure().invoke(f -> Log.error("Outbound publisher stream failed — retrying", f))
+                .onFailure().retry().withBackOff(java.time.Duration.ofMillis(200), java.time.Duration.ofSeconds(5)).indefinitely()
                 .subscribe().with(
                         ignored -> Log.debug("Publishing messages!"),
-                        failure -> {
-                            queueSize.set(0);
-                            metrics.resetQueueSize();
-                            Log.error("Processor terminated unexpectedly", failure);
-                        }
+                        failure -> Log.error("Processor terminated (retries exhausted)", failure)
                 );
         ready.set(true);
     }
 
     @Override
-    public void publish(Message msg) {
+    public boolean publish(Message msg) {
         if (!ready.get()) {
             Log.warn("Not initialized");
-            return;
+            return false;
         }
         if (queueIsFull()) {
             metrics.recordDropped();
             Log.warn("Message dropped due to limit");
-            return;
+            return false;
         }
         Log.debug("Message was published");
         emitter.get().emit(msg);
+        return true;
     }
 
     @Override
