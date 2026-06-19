@@ -75,6 +75,41 @@
       storage:
         service: redis
 
+  # Inter-service Kafka integration (ADR-007): consume order.events.
+  # NB: the default MUST be a resolvable host. An unresolvable bootstrap host fails Kafka-consumer
+  # construction and hard-fails startup (not just health). `localhost:9092` always resolves, so a
+  # broker-less env (e2e/Karate, or prod before the broker is provisioned) still boots — the consumer
+  # just retries connecting in the background. Real prod sets KAFKA_BOOTSTRAP_SERVERS to the broker.
+  kafka:
+    bootstrap:
+      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  mp:
+    messaging:
+      incoming:
+        order-events-in:
+          connector: smallrye-kafka
+          topic: order.events
+          group:
+            id: hormiga-messenger
+          value:
+            deserializer: org.apache.kafka.common.serialization.StringDeserializer
+          auto:
+            offset:
+              reset: earliest
+          # at-least-once + idempotent handlers; failed processing nacks → redelivery.
+          failure-strategy: fail
+          # The Order `order.events` topic/broker is not provisioned yet (blocked on the Order side),
+          # and the e2e/Karate env has no Kafka. Don't let an absent broker flip readiness DOWN — the
+          # connector retries connecting in the background. Re-enable once the broker is live in the env.
+          health-readiness-enabled: false
+
+  # Order-event type contract (ASSUMED — reconcile with the Order team). Override without code change.
+  messenger:
+    order-events:
+      type:
+        master-interested: order.master.interested
+        contract-reached: order.contract.concluded
+
 
 
 

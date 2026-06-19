@@ -3,6 +3,15 @@
     http:
       port: 7777
 
+  # The OrderEventConsumer's @Incoming("order-events-in") channel is backed by the in-memory
+  # connector in tests (no Kafka broker / Dev Services needed). OrderEventConsumerTest drives it
+  # via InMemoryConnector; the other @QuarkusTest apps just leave it idle.
+  mp:
+    messaging:
+      incoming:
+        order-events-in:
+          connector: smallrye-in-memory
+
   processing:
     messages:
       inbound:

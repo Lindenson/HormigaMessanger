@@ -48,6 +48,15 @@ public class ConversationService {
         return repository.findById(id);
     }
 
+    /**
+     * Resolve the conversation for a participant pair. Used by event adapters that key by pair
+     * (e.g. freeze-on-contract), since cross-service events carry {@code (clientId, masterId)},
+     * not the messenger's internal conversation id.
+     */
+    public Uni<Conversation> findByPair(String clientId, String masterId) {
+        return repository.findByPair(clientId, masterId);
+    }
+
     /** Soft-delete (hide) the chat for the caller; membership-checked. */
     public Uni<Outcome> hide(String chatId, String userId) {
         return guarded(chatId, userId, () -> repository.hideFor(chatId, userId));
