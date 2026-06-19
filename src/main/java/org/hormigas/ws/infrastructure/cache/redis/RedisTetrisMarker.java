@@ -101,14 +101,17 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
             local counts = KEYS[3]
             local msg = tostring(ARGV[1])
             local client = ARGV[2]
-            
-            redis.call('ZREM', per, msg)
-            
-            local cnt = redis.call('HINCRBY', counts, client, -1)
-            if tonumber(cnt) < 0 then
-                redis.call('HSET', counts, client, 0)
+
+            -- Only decrement the count when an id was actually pending (mirror onSent's ZADD-guard),
+            -- otherwise a duplicate/late ACK drifts the count below the true ZCARD.
+            local removed = redis.call('ZREM', per, msg)
+            if removed == 1 then
+                local cnt = redis.call('HINCRBY', counts, client, -1)
+                if tonumber(cnt) < 0 then
+                    redis.call('HSET', counts, client, 0)
+                end
             end
-            
+
             local minMember = redis.call('ZRANGE', per, 0, 0)
             if minMember[1] then
                 local safe = tonumber(minMember[1])
@@ -129,9 +132,10 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
             local gmin = KEYS[2]
             local counts = KEYS[3]
             local client = ARGV[1]
-            
+
             redis.call('DEL', per)
-            redis.call('HSET', counts, client, 0)
+            -- remove the count field entirely (HSET 0 leaked a field per distinct client forever)
+            redis.call('HDEL', counts, client)
             redis.call('ZREM', gmin, client)
             return 1
             """;
@@ -224,6 +228,11 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
      */
     @SuppressWarnings("unchecked")
     private Uni<?> evalCached(String sha, String rawScript, List<String> keys, List<String> args) {
+        // If the SHA never loaded (Redis was down at @Startup), run the full script directly — EVAL
+        // executes and re-caches it, so ops recover without a JVM restart.
+        if (sha == null || sha.isBlank()) {
+            return eval(rawScript, keys, args);
+        }
         return ((Uni<Object>) evalSha(sha, keys, args))
                 .onFailure(RedisTetrisMarker::isNoScript)
                 .recoverWithUni(() -> {

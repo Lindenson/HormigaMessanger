@@ -389,6 +389,29 @@ public class RedisTetrisMarkerTest {
         assertFalse(tetris.isPrimed().await().indefinitely(), "flushed Redis must read as unprimed");
     }
 
+    @Test
+    public void testAckOfNonPendingIdDoesNotDriftCount() {
+        // two genuinely pending ids → count 2
+        tetris.onSent(msg(1L, recipient1)).await().indefinitely();
+        tetris.onSent(msg(2L, recipient1)).await().indefinitely();
+        // a late/duplicate ACK of an id that is NOT pending must not decrement the count (T4)
+        tetris.onAck(msg(99L, recipient1)).await().indefinitely();
+        // count still reflects the 2 real pending ids → recipient is still "heavy" at threshold 2
+        var heavy = tetris.findHeavyClients(2, 10).await().indefinitely();
+        assertTrue(heavy.contains(recipient1), "count must not drift below the true pending size");
+    }
+
+    @Test
+    public void testDisconnectRemovesCountField() {
+        tetris.onSent(msg(1L, recipient1)).await().indefinitely();
+        assertNotNull(redis.hget("tetris:re:cnt", recipient1).await().indefinitely(),
+                "count field present while pending");
+        tetris.onDisconnect(recipient1).await().indefinitely();
+        // T3: HDEL removes the field entirely (previously HSET 0 leaked a field per client forever)
+        assertNull(redis.hget("tetris:re:cnt", recipient1).await().indefinitely(),
+                "count field removed on disconnect");
+    }
+
     // helper to build Message objects used by tests
     private Message msg(long id, String recipientId) {
         return Message.builder()
