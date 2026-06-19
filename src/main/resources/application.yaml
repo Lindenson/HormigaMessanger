@@ -74,6 +74,10 @@
         ttl-seconds: 30
       storage:
         service: redis
+    attachments:
+      max-size-bytes: 26214400   # 25 MiB cap on a single upload
+      orphan-age-seconds: 3600   # reclaim a PENDING upload that never confirmed after 1h
+      cleanup-every: 15m
 
   # Inter-service Kafka integration (ADR-007): consume order.events.
   # NB: the default MUST be a resolvable host. An unresolvable bootstrap host fails Kafka-consumer
@@ -109,6 +113,17 @@
       type:
         master-interested: order.master.interested
         contract-reached: order.contract.concluded
+
+  # Attachments (concept §10, ADR-010): two-phase presigned upload to MinIO. The endpoint MUST be a
+  # host clients can also reach (MINIO_PUBLIC_URL split-horizon); e2e shares localhost:9000. The client
+  # is lazy, so startup never depends on MinIO being up.
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:hormiga}
+    secret-key: ${MINIO_SECRET_KEY:hormiga123}
+    bucket: ${MINIO_BUCKET:messenger-attachments}
+    upload-ttl-seconds: 600
+    download-ttl-seconds: 300
 
 
 
