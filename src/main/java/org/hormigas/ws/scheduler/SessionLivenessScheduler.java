@@ -7,27 +7,43 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.domain.session.ClientSession;
 import org.hormigas.ws.ports.session.SessionRegistry;
+import org.hormigas.ws.ports.tetris.TetrisMarker;
 
 import java.util.List;
 
 /**
- * Heartbeat liveness reaper (FR-PRES-03). The server auto-pings; a live client replies pong, which
- * refreshes {@code lastActiveAt}. A connection that stops responding goes stale and is force-closed
- * here — closing fires {@code @OnClose → leave}, which makes presence honest and unblocks GC
- * (no phantom-online clients).
+ * Session reapers (prod).
+ * <ul>
+ *   <li><b>Liveness</b> (FR-PRES-03): the server auto-pings; a live client replies pong → refreshes
+ *       {@code lastActiveAt}. A connection that stops responding is force-closed → {@code @OnClose →
+ *       leave} → honest presence, GC unblocked (no phantom-online clients).</li>
+ *   <li><b>Overload</b> (T2): a client whose un-ACKed backlog exceeds {@code max-pending} is
+ *       force-disconnected. {@code onDisconnect} wipes its pending set and frees the GC watermark; the
+ *       client recovers via REST history-sync on reconnect. This caps the per-recipient pending ZSET
+ *       so a connected non-ACKing client can't grow it (or the outbox) without bound.</li>
+ * </ul>
  */
 @Slf4j
 @ApplicationScoped
 @IfBuildProfile("prod")
 public class SessionLivenessScheduler {
 
+    private static final int OVERLOAD_KICK_BATCH = 100;
+
     @Inject
     SessionRegistry<WebSocketConnection> registry;
 
+    @Inject
+    TetrisMarker<Message> tetrisMarker;
+
     @ConfigProperty(name = "processing.session.idle-timeout-ms", defaultValue = "35000")
     long idleTimeoutMs;
+
+    @ConfigProperty(name = "processing.session.max-pending", defaultValue = "1000")
+    int maxPending;
 
     @Scheduled(every = "${processing.session.reaper-every:15s}",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
@@ -44,6 +60,30 @@ public class SessionLivenessScheduler {
             conn.close().subscribe().with(
                     x -> {},
                     e -> log.debug("Error closing stale connection {}: {}", conn.id(), e.getMessage()));
+        }
+    }
+
+    @Scheduled(every = "${processing.session.overload-reaper-every:20s}",
+            concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
+    public void reapOverloaded() {
+        tetrisMarker.findHeavyClients(maxPending, OVERLOAD_KICK_BATCH)
+                .subscribe().with(
+                        heavy -> heavy.forEach(this::forceOffline),
+                        err -> log.error("Overload reaper failed", err));
+    }
+
+    /** Force-disconnect every session of an overloaded client → onDisconnect wipes its pending state. */
+    private void forceOffline(String clientId) {
+        List<WebSocketConnection> conns = registry.streamSessionsByClientId(clientId)
+                .map(ClientSession::getSession)
+                .filter(WebSocketConnection::isOpen)
+                .toList();
+        for (WebSocketConnection conn : conns) {
+            log.warn("Reaping overloaded client {} (> {} un-ACKed pending) — connection {}",
+                    clientId, maxPending, conn.id());
+            conn.close().subscribe().with(
+                    x -> {},
+                    e -> log.debug("Error closing overloaded connection {}: {}", conn.id(), e.getMessage()));
         }
     }
 }

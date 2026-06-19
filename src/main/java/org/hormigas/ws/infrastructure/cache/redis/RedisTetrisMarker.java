@@ -166,26 +166,7 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
     @PostConstruct
     void init() {
         try {
-            // Clean all per-recipient keys. SCAN (cursor) instead of KEYS so a large keyspace is
-            // never blocked, and UNLINK in one batch per page instead of a blocking DEL per key.
-            String cursor = "0";
-            do {
-                io.vertx.mutiny.redis.client.Response page = redis.scan(List.of(
-                        cursor, "MATCH", RECIPIENT_KEY_PREFIX + "*", "COUNT", "500"))
-                        .await().indefinitely();
-                cursor = page.get(0).toString();
-                io.vertx.mutiny.redis.client.Response keys = page.get(1);
-                if (keys != null && keys.size() > 0) {
-                    List<String> batch = new ArrayList<>(keys.size());
-                    keys.forEach(k -> batch.add(k.toString()));
-                    redis.unlink(batch).await().indefinitely();
-                }
-            } while (!"0".equals(cursor));
-
-            redis.unlink(List.of(GLOBAL_MIN_KEY, COUNTS_KEY, LAST_ID_KEY))
-                    .await().indefinitely();
-
-            log.info("Redis Tetris initial cleanup complete");
+            wipeColdState();
 
             final String load = "LOAD";
             LUA_ON_SENT_SHA = redis.script(List.of(load, LUA_ON_SENT)).await().indefinitely().toString();
@@ -194,8 +175,44 @@ public class RedisTetrisMarker implements TetrisMarker<Message> {
             LUA_COMPUTE_GLOBAL_SHA = redis.script(List.of(load, LUA_COMPUTE_GLOBAL)).await().indefinitely().toString();
 
         } catch (Exception e) {
-            log.error("Redis cleanup failed", e);
+            log.error("Redis Tetris init failed", e);
         }
+    }
+
+    /**
+     * Clears stale Tetris state at startup — but ONLY on a cold Redis (T6). If the state is already
+     * primed (another app instance owns it, or this instance is restarting against intact Redis), the
+     * wipe is skipped so one node's restart doesn't clobber the shared state of its peers. SCAN+UNLINK
+     * (not blocking KEYS/DEL). Returns whether it wiped.
+     */
+    boolean wipeColdState() {
+        boolean primed;
+        try {
+            primed = isPrimed().await().indefinitely();
+        } catch (Exception e) {
+            primed = false;
+        }
+        if (primed) {
+            log.info("Redis Tetris already primed — skipping startup wipe (preserving shared state)");
+            return false;
+        }
+        String cursor = "0";
+        do {
+            io.vertx.mutiny.redis.client.Response page = redis.scan(List.of(
+                    cursor, "MATCH", RECIPIENT_KEY_PREFIX + "*", "COUNT", "500"))
+                    .await().indefinitely();
+            cursor = page.get(0).toString();
+            io.vertx.mutiny.redis.client.Response keys = page.get(1);
+            if (keys != null && keys.size() > 0) {
+                List<String> batch = new ArrayList<>(keys.size());
+                keys.forEach(k -> batch.add(k.toString()));
+                redis.unlink(batch).await().indefinitely();
+            }
+        } while (!"0".equals(cursor));
+
+        redis.unlink(List.of(GLOBAL_MIN_KEY, COUNTS_KEY, LAST_ID_KEY)).await().indefinitely();
+        log.info("Redis Tetris cold-start cleanup complete");
+        return true;
     }
 
 

@@ -412,6 +412,23 @@ public class RedisTetrisMarkerTest {
                 "count field removed on disconnect");
     }
 
+    @Test
+    public void testWipeColdStateSkipsWhenPrimed() {
+        tetris.onSent(msg(5L, recipient1)).await().indefinitely();          // live state
+        redis.set(List.of("tetris:primed", "1")).await().indefinitely();   // owned by a peer / warm Redis
+        assertFalse(tetris.wipeColdState(), "T6: must not wipe when Redis is already primed");
+        var z = redis.zrange(List.of("tetris:re:" + recipient1 + ":ack", "0", "-1")).await().indefinitely();
+        assertEquals(1, z.size(), "primed shared state must be preserved");
+    }
+
+    @Test
+    public void testWipeColdStateClearsWhenNotPrimed() {
+        tetris.onSent(msg(5L, recipient1)).await().indefinitely();          // creates keys, primed NOT set
+        assertTrue(tetris.wipeColdState(), "T6: a cold (unprimed) Redis is wiped");
+        var z = redis.zrange(List.of("tetris:re:" + recipient1 + ":ack", "0", "-1")).await().indefinitely();
+        assertEquals(0, z.size(), "stale state cleared on cold start");
+    }
+
     // helper to build Message objects used by tests
     private Message msg(long id, String recipientId) {
         return Message.builder()
