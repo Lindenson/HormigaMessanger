@@ -39,17 +39,43 @@ class DeliveryStageTest {
     }
 
     private RouterContext<Message> ctx(MessageType type, StageResult<Message> persisted) {
+        return ctx(type, persisted, PipelineType.INBOUND_PERSISTENT);
+    }
+
+    private RouterContext<Message> ctx(MessageType type, StageResult<Message> persisted, PipelineType pipeline) {
         RouterContext<Message> c = RouterContext.<Message>builder()
                 .payload(Message.builder().type(type).recipientId("r").messageId("m1").build())
-                .pipelineType(PipelineType.INBOUND_PERSISTENT).build();
+                .pipelineType(pipeline).build();
         c.setPersisted(persisted);
         return c;
     }
 
     @Test
-    @DisplayName("when persistence did not succeed, delivery is skipped and the channel is untouched")
-    void skipsWhenNotPersisted() {
-        RouterContext<Message> out = stage.apply(ctx(MessageType.CHAT_OUT, StageResult.unknown())).await().indefinitely();
+    @DisplayName("when persistence FAILED, delivery is skipped and the channel is untouched")
+    void skipsWhenPersistFailed() {
+        RouterContext<Message> out = stage.apply(ctx(MessageType.CHAT_OUT, StageResult.failed())).await().indefinitely();
+        assertTrue(out.getDelivered().isSkipped());
+        verify(channel, never()).deliver(any());
+    }
+
+    @Test
+    @DisplayName("a non-persistent INBOUND pipeline (signaling INBOUND_CACHED, persisted UNKNOWN) is still delivered")
+    void deliversNonPersistentInbound() {
+        when(idempotency.isInProgress(any())).thenReturn(Uni.createFrom().item(false));
+        when(channel.deliver(any())).thenReturn(Uni.createFrom().item(StageResult.passed()));
+        RouterContext<Message> out = stage
+                .apply(ctx(MessageType.SIGNAL_OUT, StageResult.unknown(), PipelineType.INBOUND_CACHED))
+                .await().indefinitely();
+        assertTrue(out.getDelivered().isSuccess());
+        verify(channel).deliver(any());
+    }
+
+    @Test
+    @DisplayName("a non-INBOUND_CACHED/DIRECT pipeline with UNKNOWN persisted still skips (outbound unchanged)")
+    void skipsWhenOutboundUnknown() {
+        RouterContext<Message> out = stage
+                .apply(ctx(MessageType.CHAT_OUT, StageResult.unknown(), PipelineType.OUTBOUND_CACHED))
+                .await().indefinitely();
         assertTrue(out.getDelivered().isSkipped());
         verify(channel, never()).deliver(any());
     }

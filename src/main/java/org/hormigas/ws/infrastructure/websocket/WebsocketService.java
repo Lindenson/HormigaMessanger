@@ -104,21 +104,25 @@ public class WebsocketService {
             }
             coordinator.active(connection);
 
-            // Persistent chat: enforce conversation membership + blacklist before accepting.
+            // Authenticated writes into a conversation (persistent chat AND real-time signaling) must
+            // enforce membership + blacklist before acceptance (UC-U61, UC-H06). Signaling is between
+            // the master and client of a chat exactly like a chat message — only the delivery strategy
+            // differs (persistent vs cached), and that is decided downstream by the pipeline resolver.
             // Trust the authenticated session id as the sender, not the client-supplied field.
-            if (message.getType() == MessageType.CHAT_IN) {
+            if (message.getType() == MessageType.CHAT_IN || message.getType() == MessageType.SIGNAL_IN) {
                 final String sender = clientSession.getClientId();
                 return conversations.canSend(message.getConversationId(), sender)
                         .map(check -> {
                             if (check == ConversationService.SendCheck.ALLOW) {
-                                // F3: a persistent message dropped at ingress (queue full) must not be
-                                // silently lost — tell the sender so it can retry.
+                                // F3: a message dropped at ingress (queue full) must not be silently
+                                // lost — tell the sender so it can retry.
                                 if (!incomingPublisher.publish(message)) {
                                     notifyOverloaded(connection, message);
                                 }
                             } else {
-                                log.warn("CHAT message {} rejected ({}) conv={} sender={}",
-                                        message.getMessageId(), check, message.getConversationId(), sender);
+                                log.warn("{} message {} rejected ({}) conv={} sender={}",
+                                        message.getType(), message.getMessageId(), check,
+                                        message.getConversationId(), sender);
                             }
                             return (Void) null;
                         })

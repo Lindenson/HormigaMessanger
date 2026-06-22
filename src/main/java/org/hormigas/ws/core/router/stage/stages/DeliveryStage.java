@@ -9,6 +9,7 @@ import org.hormigas.ws.config.MessengerConfig;
 import org.hormigas.ws.domain.stage.StageResult;
 import org.hormigas.ws.ports.channel.DeliveryChannel;
 import org.hormigas.ws.ports.idempotency.IdempotencyManager;
+import org.hormigas.ws.core.router.PipelineResolver.PipelineType;
 import org.hormigas.ws.core.router.context.RouterContext;
 import org.hormigas.ws.core.router.stage.PipelineStage;
 import org.hormigas.ws.domain.message.Message;
@@ -39,7 +40,15 @@ public class DeliveryStage implements PipelineStage<RouterContext<Message>> {
 
     @Override
     public Uni<RouterContext<Message>> apply(RouterContext<Message> ctx) {
-        if (!ctx.getPersisted().isSuccess()) {
+        // Persistence gate: never deliver a message that was supposed to be persisted but wasn't.
+        // The non-persistent INBOUND pipelines (signaling = INBOUND_CACHED, presence = INBOUND_DIRECT)
+        // legitimately have no outbox stage, so `persisted` stays UNKNOWN — they MUST still deliver
+        // live (this is what makes WebRTC signaling work; the gate previously dropped it silently).
+        // All other pipelines keep the original gate (deliver only on persist success), so the
+        // outbound/offline-redelivery behaviour is unchanged.
+        boolean nonPersistentInbound = ctx.getPipelineType() == PipelineType.INBOUND_CACHED
+                || ctx.getPipelineType() == PipelineType.INBOUND_DIRECT;
+        if (!nonPersistentInbound && !ctx.getPersisted().isSuccess()) {
             ctx.setDelivered(StageResult.skipped());
             return Uni.createFrom().item(ctx);
         }
