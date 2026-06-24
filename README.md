@@ -298,11 +298,50 @@ History sync is **conversation-scoped and cursor-paginated**:
 
 ## 🌐 HTTP & WebSocket API
 
-### WebSocket
+### WebSocket protocol
 
-```
-ws://<host>/ws        # identity via the headers above; send/receive Message JSON frames
-```
+Connect to `ws://<host>/ws` with the **Ory identity headers on the handshake** (same as REST). The
+server trusts the session's `X-User-Id` as the authenticated sender. Frames are JSON `Message` objects.
+
+**Frame schema** (fields used vary by `type`):
+
+| field | set by | meaning |
+|-------|--------|---------|
+| `type` | both | the `MessageType` (tables below) |
+| `senderId` / `recipientId` | client (inbound) / server (outbound) | identities |
+| `conversationId` | both | chat id (the `(client,master)` pair); `system:<id>` for system notices |
+| `messageId` | client on send → **server reassigns a ULID** | server id is monotonic + the history page cursor |
+| `correlationId` | both | links an ACK/receipt to the referenced `messageId` |
+| `ackId` | client on `*_ACK` | the outbox row id being acked (advances the GC watermark) |
+| `payload.kind` / `payload.body` | both | `text` · `custom` · `event` · `attachment`; `body` = content/reference |
+| `meta` | both | opaque string map (e.g. `orderId`, attachment `objectKey/fileName/...`) |
+| `senderTimestamp` / `senderTimezone` | client | epoch ms + IANA tz (validated, ≤ 5 min skew) |
+| `serverTimestamp` / `id` / `sequenceNumber` | server | server-assigned |
+
+**Inbound — client → server** (only these are accepted; others rejected):
+
+| `type` | purpose |
+|--------|---------|
+| `CHAT_IN` | send a chat message (persistent, Strategy A) — membership + blacklist guarded |
+| `SIGNAL_IN` | WebRTC offer/answer/ICE (Strategy S, ephemeral) — same membership guard |
+| `CHAT_ACK` | recipient delivery-ACK: `correlationId`=delivered `messageId`, `ackId`=outbox id → `SENT→DELIVERED` |
+| `READ_IN` | recipient read the conversation → marks `READ` + pushes `READ_OUT` to the sender |
+| `SYSTEM_ACK` | confirm a system notice: `correlationId`=notice `messageId` → retracts the dead-letter draft |
+
+**Outbound — server → client:**
+
+| `type` | purpose |
+|--------|---------|
+| `CHAT_OUT` | a delivered chat message |
+| `CHAT_ACK` | `SENT` receipt back to the sender (`correlationId` = the sent `messageId`) |
+| `SIGNAL_OUT` | a delivered signaling frame |
+| `READ_OUT` | "your messages were read" → the original sender |
+| `PRESENT_INIT` / `PRESENT_JOIN` / `PRESENT_LEAVE` | presence snapshot / peer online / peer offline |
+| `SYSTEM_OUT` | a must-arrive system notice (Strategy C) — confirm with `SYSTEM_ACK` |
+| `SERVICE_OUT` | transient service notice (e.g. ingress overload / backpressure) |
+
+Delivery is **at-least-once**; the client **dedups by `messageId`** and **re-sorts by the monotonic
+id** (ordering is client-authoritative). Missing/blank identity on the handshake → the socket is closed.
 
 ### REST — `/api/chats`
 
@@ -324,7 +363,32 @@ ws://<host>/ws        # identity via the headers above; send/receive Message JSO
 |---------------|---------|
 | `GET /api/history` | Caller-scoped message history |
 | `GET /api/presence` | Presence snapshot |
+| `POST /api/chats/{id}/attachments/upload-url` · `…/{aid}/confirm` · `GET …/{aid}/download-url` | Two-phase presigned attachment upload (ADR-010) |
+| `POST /api/system/notify` | Emit a must-arrive system notice (Strategy C) — **ADMIN/SERVICE only** |
 | `GET /q/health`, `GET /q/metrics` | Health & Prometheus metrics |
+| `GET /q/openapi`, `GET /q/swagger-ui` | OpenAPI spec + Swagger UI (REST) |
+
+### Kafka — `order.events` (inbound)
+
+The service **consumes** `order.events` (channel `order-events-in`, SmallRye Kafka) as the second
+driving adapter over the create-chat / freeze core ops (concept §2, ADR-007). JSON envelope:
+
+```jsonc
+{
+  "eventId":    "uuid",                 // producer dedup key (at-least-once; consumer is idempotent)
+  "eventType":  "order.master.interested",
+  "occurredAt": "2026-06-24T10:00:00Z",
+  "payload": { "clientId": "...", "masterId": "...", "orderId": "..." }  // Ory identity ids + opaque orderId
+}
+```
+
+| `eventType` (config-driven) | action |
+|-----------------------------|--------|
+| `order.master.interested` (`messenger.order-events.type.master-interested`) | **UC-H01** create the `(client,master)` chat (idempotent, `orderId` as metadata) |
+| `order.contract.concluded` (`messenger.order-events.type.contract-reached`) | **UC-H04** resolve the chat by pair → freeze that order's messages |
+
+> **Assumed contract — reconcile with the Order team.** The envelope mirrors ADR-007; the concrete
+> `eventType` strings are config (`messenger.order-events.type.*`), so reconciliation is config, not code.
 
 ---
 

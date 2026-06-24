@@ -45,6 +45,14 @@
           enabled: true
           path: /q/metrics
 
+    # OpenAPI spec at /q/openapi (+ Swagger UI at /q/swagger-ui, force-included in prod for ops).
+    smallrye-openapi:
+      info-title: Hormigas Messenger API
+      info-version: 1.0.0
+      info-description: Master↔client chat — REST (chats/messages/freeze/receipts/system-notify). WebSocket protocol is documented in the README.
+    swagger-ui:
+      always-include: true
+
 
   processing:
     messages:
