@@ -24,9 +24,12 @@ import static io.gatling.javaapi.http.HttpDsl.*;
  */
 public class MessengerLoadSimulation extends Simulation {
 
+    // Concurrent chat pairs held active (closed model). Sustained send rate ≈ USERS × 1000/PAUSE_MS.
     private static final int USERS = Integer.getInteger("load.users", 50);
-    private static final int RAMP = Integer.getInteger("load.ramp", 30);
-    private static final int MSGS = Integer.getInteger("load.msgs", 20);
+    private static final int RAMP = Integer.getInteger("load.ramp", 15);
+    private static final int DURATION = Integer.getInteger("load.duration", 60);
+    private static final int MSGS = Integer.getInteger("load.msgs", 5000);   // high → VUs stay send-bound
+    private static final int PAUSE_MS = Integer.getInteger("load.pauseMs", 100);
     private static final String BASE = System.getProperty("load.baseUrl", "http://localhost:8080");
     private static final String WS_BASE = System.getProperty("load.wsUrl", "ws://localhost:8080");
 
@@ -40,6 +43,7 @@ public class MessengerLoadSimulation extends Simulation {
             "{\"type\":\"CHAT_IN\",\"senderId\":\"#{mId}\",\"recipientId\":\"#{cId}\"," +
             "\"conversationId\":\"#{conv}\",\"messageId\":\"#{mid}\",\"senderTimestamp\":#{now}," +
             "\"senderTimezone\":\"UTC\",\"payload\":{\"kind\":\"text\",\"body\":\"load\"}}";
+
 
     private final ScenarioBuilder scn = scenario("messenger-chat-pair")
             .exec(session -> {
@@ -62,15 +66,31 @@ public class MessengerLoadSimulation extends Simulation {
                     .header("X-Role", "CLIENT").header("X-User-Email", "#{cId}@load"))
             .pause(Duration.ofMillis(1200)) // both sessions register
             .repeat(MSGS).on(
-                    exec(session -> session.set("mid", UUID.randomUUID().toString()))
-                            .exec(ws("send-chat").wsName("master").sendText(CHAT_IN))
-                            .pause(Duration.ofMillis(200))
+                    exec(session -> session
+                            .set("mid", UUID.randomUUID().toString())
+                            .set("now", System.currentTimeMillis()))
+                            // Master sends CHAT_IN and AWAITS the server's SENT ack (CHAT_ACK, correlationId =
+                            // this message's id) on the same socket. This confirms the server PERSISTED it:
+                            // a drop at the inbound backpressure gate → no SENT ack → await times out → KO.
+                            // So KO + latency here are honest server-side throughput (not just "WS write ok"),
+                            // and the await self-throttles each VU to the server's real ack rate.
+                            .exec(ws("send-chat").wsName("master").sendText(CHAT_IN)
+                                    .await(10).on(
+                                            ws.checkTextMessage("sent-ack")
+                                                    .matching(jsonPath("$.type").is("CHAT_ACK"))
+                                                    .check(jsonPath("$.type").is("CHAT_ACK"))))
+                            .pause(Duration.ofMillis(PAUSE_MS))
             )
             .exec(ws("close-client").wsName("client").close())
             .exec(ws("close-master").wsName("master").close());
 
     {
-        setUp(scn.injectOpen(rampUsers(USERS).during(Duration.ofSeconds(RAMP))))
-                .protocols(httpProtocol);
+        // Closed model: ramp to USERS concurrent pairs, then hold — sustained CHAT_IN throughput.
+        setUp(scn.injectClosed(
+                        rampConcurrentUsers(1).to(USERS).during(Duration.ofSeconds(RAMP)),
+                        constantConcurrentUsers(USERS).during(Duration.ofSeconds(DURATION))))
+                .protocols(httpProtocol)
+                // hard cap: VUs send continuously (MSGS is large), so bound the whole run by wall-clock
+                .maxDuration(Duration.ofSeconds(RAMP + DURATION + 5));
     }
 }

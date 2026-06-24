@@ -411,6 +411,42 @@ WebSocket max message size is 64 KiB.
 
 ---
 
+## ⚡ Performance tuning
+
+All knobs live under `processing.*` in `application.yaml`, are env-overridable, and apply in the `prod` profile. Defaults below are the shipped values.
+
+| Group | Param | Default | What it does | Raise ↑ / Lower ↓ |
+|---|---|---|---|---|
+| Inbound backpressure | `processing.messages.inbound.queue-size` | `3000` | Admission gate on in-flight inbound (client→router) messages; over the cap `publish()` records a drop and emits a `SERVICE_OUT` overload notice. The only bound on the inbound path (Mutiny buffers unconditionally behind it). | ↑ fewer drops/overload notices in bursts, but more retained `Message` graphs (heap/GC) and deeper head-of-line latency (SEQUENTIAL). ↓ bounded memory + lower queueing latency, but sheds load and surfaces overload sooner. |
+| Outbox / outbound | `processing.messages.outbound.batch-size` | `1500` | Max rows claimed per outbox drain (`LIMIT` in the SKIP-LOCKED claim); each row is leased (5s) and emitted one-by-one into the outbound stream. Floored to 50. | ↑ drains backlog in fewer cycles, amortizes the claim cost, but bursts the outbound queue and raises per-poll heap/GC. ↓ slower drain/recovery, gentler bursts. Keep `< queue-size`. |
+| Outbox / outbound | `processing.messages.outbound.queue-size` | `5000` | Hard capacity of the in-memory outbound dispatch queue; over it `publish()` drops. Also gates the poller — it only fetches when the queue is empty. | ↑ tolerates bigger publish bursts before drops, at a larger worst-case heap. ↓ saturates and drops sooner; re-polls sooner. |
+| Outbox / outbound | `processing.messages.outbound.polling-ms` | `1000` | Base outbox poll cadence (`@Scheduled`, SKIP guards re-entry); also the floor the feedback regulator modulates upward. | ↑ less CPU/DB poll traffic, higher redelivery latency. ↓ lower latency + faster drain, but more wake-ups and SKIP-LOCKED queries even when idle. Sets the best-case latency floor. |
+| Adaptive feedback | `processing.messages.feedback.additional-ms` | `1000` | Base added poll delay and the floor the adaptive interval decays back to. | ↑ slower baseline drain (poller never polls faster than this). ↓ tighter stable-state loop, lower latency, more DB polls. |
+| Adaptive feedback | `processing.messages.feedback.adjustment-factor` | `2.0` | Multiplicative back-off (>1) applied to the interval on a drop event. | ↑ steeper back-off — sheds load faster but overshoots/idles the outbox. ↓ gentler — stays fast under load but risks sustained drops. |
+| Adaptive feedback | `processing.messages.feedback.recovery-factor` | `0.5` | Decay multiplier (<1) applied on a stable health event, shrinking the inflated interval toward `additional-ms`. | ↑ (→1) slower, steadier recovery; prolonged latency after a burst. ↓ (→0) snaps back to fast polling, but risks oscillation. |
+| Adaptive feedback | `processing.messages.feedback.max-ms` | `30000` | Hard ceiling on the adaptive added delay. | ↑ harder load-shedding under sustained overload, but worst-case redelivery latency/backlog grows. ↓ bounds tail latency, but keeps hitting the DB. |
+| Delivery retry | `processing.messages.channel.retry` | `true` | Master on/off for per-delivery WS-push retry with backoff in `DeliveryStage`. | ↑ `true` retries transient socket failures up to `max-retries`. ↓ `false` makes the first failure final — lower latency/memory, higher immediate drop-rate. |
+| Delivery retry | `processing.messages.channel.min-backoff-ms` | `300` | Initial backoff before the first retry (base of the jittered exponential). | ↑ gives a flapping client more time to recover, longer in-flight retention/latency. ↓ retries sooner, hammers an unhealthy socket and burns the budget. |
+| Delivery retry | `processing.messages.channel.max-backoff-ms` | `1000` | Ceiling on the growing backoff between retries. | ↑ stretches tail latency to buy a lower drop-rate on slow-recovering sockets. ↓ caps latency, frees resources, but wastes the budget on clients needing more time. |
+| Delivery retry | `processing.messages.channel.max-retries` | `3` | Retry attempts after the initial delivery before the delivery errors out (→ offline/outbox paths). | ↑ lower effective drop-rate, but linearly more in-flight retention, CPU and worst-case latency. ↓ fails fast, frees resources, higher first-failure drop-rate. (With defaults, worst-case added delay ≈ 300+600+1000 ≈ ~1.9s before final failure.) |
+| Outbox GC | `processing.messages.collector.every-s` | `10` | Period of the watermark GC sweep that `DELETE`s outbox rows below the global safe-delete id (SKIP guards overlap). Only ever reclaims already-safe rows. | ↑ table grows between sweeps, bigger per-sweep DELETE/lock/WAL, fewer Redis round-trips. ↓ leaner table/index, cheaper scans, more Redis+DELETE traffic. No latency/drop-rate effect. |
+| Outbox GC | `processing.messages.collector.max-watermarks` | `100` | **Inert / reserved** — bound but has no runtime consumer; changing it has no observable effect today. Flag for cleanup (wire it or remove it). | No effect. |
+| Idempotency | `processing.messages.idempotent.ttl-seconds` | `30` | TTL of the Redis dedup key for a delivered message; the window in which a redelivery is recognized as a duplicate and suppressed (ACK retracts it sooner). | ↑ more robust dedup across retries/reconnects, more resident Redis keys. ↓ frees memory, but redeliveries arriving after expiry can double-deliver. Keep above the realistic retry/poll/feedback horizon. |
+| Attachments | `processing.attachments.max-size-bytes` | `26214400` | Hard cap (25 MiB) on a single upload, checked against the client-declared size at `requestUpload` before any row/presigned URL (advisory; skipped if size is null). | ↑ permits larger files — more MinIO storage and bigger presigned GET transfers. ↓ rejects more uploads early; too low blocks legitimate documents. |
+| Attachments | `processing.attachments.orphan-age-seconds` | `3600` | Grace period before the reaper reclaims an unconfirmed `PENDING` attachment (CONFIRMED untouched). Must exceed `minio.upload-ttl-seconds` (600). | ↑ orphaned rows/objects linger, bigger reaper scans. ↓ frees storage sooner, but below the upload window risks reaping in-flight uploads (false reclaim). |
+| Attachments | `processing.attachments.cleanup-every` | `15m` | `@Scheduled` period of the orphan-reclaim job (prod-only, SKIP, BATCH=200/tick). Quarkus duration string. | ↑ slower backlog drain, dead objects persist longer, less DB/MinIO load. ↓ tighter storage, faster drain, more scans/deletes. No live-path latency effect. |
+| Dead-letter | `processing.deadletter.cleanup-every` | `30s` | Period of the dead-letter retract sweep (confirm→delete→clear, SKIP, BATCH=500/tick). Default is the inline annotation literal — the key is absent from `application.yaml`. | ↑ confirmed drafts + Redis confirmed-set linger, less DB/Redis traffic. ↓ fresher audit table, but a full `SMEMBERS` + DELETE every tick. Keep low enough that 500/tick keeps pace with the ACK rate. |
+
+### Trade-offs (cross-cutting)
+
+- **Bigger inbound/outbound queues + batch-size** → more RAM and higher latency-under-overload (deeper SEQUENTIAL backlogs), but fewer drops. Keep `batch-size < outbound queue-size` or a drain burst fills the queue and starts dropping.
+- **Faster `polling-ms` / lower `additional-ms`** → lower delivery latency and faster drain, but more DB SKIP-LOCKED claims and Redis round-trips per second, even when idle.
+- **Aggressive feedback growth (`adjustment-factor` ↑, `recovery-factor` →1)** → sheds load and cuts drops faster with fewer wasted polls, but slower drain and higher tail latency after a burst clears; a low `recovery-factor` recovers fast but can oscillate.
+- **Idempotent `ttl-seconds` too low** → redeliveries lapse the dedup window and double-deliver; **too high** → more resident Redis keys (memory). Keep it above the retry + poll + max feedback-delay horizon.
+- **Collector `every-s` too high** → outbox table/index bloat and bigger per-sweep DELETEs (GC only reclaims already-safe rows, never affects latency/drops); **dead-letter `cleanup-every` too high** → the Postgres `dead_letter` table and the unbounded Redis confirmed-set grow without bound.
+
+---
+
 ## 🧮 Persistence schema
 
 Flyway migrations (`src/main/resources/db/migration`):
