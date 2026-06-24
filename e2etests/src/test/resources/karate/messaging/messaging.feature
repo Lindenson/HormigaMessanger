@@ -19,6 +19,9 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     Then status 201
     * def convId = response.id
 
+  @ws
+  # Live WS frame capture — covered by hormiga.ws.ChatDeliveryWsTest (Karate can't capture WS frames
+  # on this JDK; 2.x paywalls WebSocket). Excluded from the Karate run via ~@ws.
   Scenario: UC-U10/U11 — persistent message delivered to the online recipient
     * def body = 'hello-' + uid
     # master connects first; the recipient (client) connects LAST so `listen` targets it.
@@ -44,6 +47,8 @@ Feature: Persistent messaging & delivery (UC-U10/U11/U13)
     * match frames[*].type contains 'CHAT_OUT'
     * match frames[*].payload.body contains body
 
+  @ws
+  # Live WS frame capture — covered by hormiga.ws.ChatDeliveryWsTest (see note above).
   Scenario: UC-M10 — sender receives a server ACK (SENT) for a persistent message
     # only the sender needs to be online; the server ACKs on persist (correlationId = sent messageId)
     * def masterSock = karate.webSocket(wsUrl, null, { headers: mHdr })

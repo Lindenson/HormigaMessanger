@@ -9,8 +9,10 @@
   <version>1.0.0</version>
   <packaging>jar</packaging>
 
-  <name>HormigaMessanger — E2E Karate Tests</name>
-  <description>ATDD acceptance suite for the master↔client chat (UC-U## / UC-H##)</description>
+  <name>HormigaMessanger — E2E Tests (Karate REST + JDK-WebSocket suite)</name>
+  <description>ATDD acceptance suite: Karate drives REST (UC-U##/UC-H##); a JUnit + JDK
+    java.net.http.WebSocket suite drives all live-WS scenarios (Karate 2.x paywalls WebSocket, and
+    1.4.1's GraalVM JS handler can't build on this JDK — so WS is covered with a real WS client).</description>
 
   <properties>
     <maven.compiler.source>21</maven.compiler.source>
@@ -18,9 +20,11 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <karate.version>1.4.1</karate.version>
     <junit5.version>5.10.1</junit5.version>
+    <jackson.version>2.17.2</jackson.version>
   </properties>
 
   <dependencies>
+    <!-- Karate (OSS 1.4.1) — REST acceptance only. -->
     <dependency>
       <groupId>com.intuit.karate</groupId>
       <artifactId>karate-junit5</artifactId>
@@ -33,10 +37,17 @@
       <version>${karate.version}</version>
       <scope>test</scope>
     </dependency>
+    <!-- Plain JUnit 5 + Jackson for the JDK-WebSocket suite (the WS client is java.net.http — no extra dep). -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
       <version>${junit5.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -57,7 +68,11 @@
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.2.5</version>
         <configuration>
-          <includes><include>**/*Runner.java</include></includes>
+          <!-- Karate REST runner + the JDK-WebSocket JUnit suite. -->
+          <includes>
+            <include>**/*Runner.java</include>
+            <include>**/*WsTest.java</include>
+          </includes>
           <systemPropertyVariables>
             <karate.options></karate.options>
             <karate.env>dev</karate.env>
