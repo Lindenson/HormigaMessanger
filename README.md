@@ -334,11 +334,15 @@ Runs under the **`prod`** profile; all hosts/secrets are environment-parameteris
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `postgres` / `5432` / `hormigasdb` / `ant` / `ant` | PostgreSQL |
-| `REDIS_HOST` / `REDIS_PORT` | `redis` / `6379` | Redis |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `postgres` / `5432` / `hormigasdb` / `ant` / `ant` | PostgreSQL (history, outbox, conversation, attachment, dead_letter) |
+| `REDIS_HOST` / `REDIS_PORT` | `redis` / `6379` | Redis (presence, idempotency, Tetris watermark, dead-letter confirmed-set) |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | inbound `order.events` consumer. Must be a **resolvable** host even if the broker/topic is absent (consumer retries; readiness not gated on it). |
+| `MINIO_ENDPOINT` | `http://localhost:9000` | MinIO for attachments. **Must be browser-reachable** — it is baked into presigned URLs. Override per env. |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET` | `hormiga` / `hormiga123` / `messenger-attachments` | MinIO credentials + bucket (created lazily). |
 
 Tunables live under `processing.*` in `application.yaml` (outbound batch size, poll interval,
-adaptive feedback factors, channel retry/backoff, credits, Tetris collector, idempotency TTL).
+adaptive feedback factors, channel retry/backoff, credits, Tetris collector, idempotency TTL,
+attachment size/orphan-age, dead-letter cleanup interval, `messenger.order-events.type.*`).
 WebSocket max message size is 64 KiB.
 
 ---
@@ -375,14 +379,45 @@ DB_HOST=localhost REDIS_HOST=localhost \
   java -Dquarkus.profile=prod -jar target/quarkus-app/quarkus-run.jar   # → :8080
 ```
 
-**End-to-end acceptance** (Karate; app + infra must be up). The suite is ATDD — one feature per UC
-group; `@wip` scenarios are excluded from the default run:
+**End-to-end acceptance** (app + infra must be up). REST is driven by **Karate** (OSS 1.4.1); all
+**live-WebSocket** scenarios are driven by a **JUnit suite over the JDK's built-in
+`java.net.http.WebSocket`** (`e2etests/.../hormiga/ws/*WsTest`) — Karate 2.x paywalls WebSocket and
+1.4.1's GraalVM JS handler can't build on this JDK (ADR-015). One `mvn test` runs both:
 
 ```bash
-cd e2etests && JAVA_HOME=/path/to/jdk-21 mvn test -Dkarate.env=dev
+cd e2etests && JAVA_HOME=/path/to/jdk-21 mvn test -Dkarate.env=dev      # 20 Karate REST + 9 WS
 ```
 
-Current coverage: **159 unit/integration tests + 18 Karate scenarios**, all green.
+Current coverage: **≈298 unit/integration tests** (`./mvnw test`, JDK 25) **+ 29 e2e** (20 Karate REST
++ 9 JDK-WebSocket), all green. The WS suite covers delivery, SENT→DELIVERED→READ, signaling, presence,
+offline→reconnect redelivery, and Strategy-C system notices.
+
+---
+
+## 🚢 Deployment
+
+Same model as the Order service ([`TaskManager/docker-compose.yml`](../TaskManager/docker-compose.yml)):
+run the pre-built `quarkus-app` jar on a `temurin:25` base, bind to the **shared platform services**
+(PostgreSQL, Redis, MinIO, Kafka) **by hostname via env vars**, join the external shared network.
+
+```bash
+cd ../MasterProfile && docker compose up -d                  # parent stack: postgres/redis/minio/kafka
+cd ../HormigaMessanger
+JAVA_HOME=/path/to/jdk-25 ./mvnw -DskipTests package
+mkdir -p messenger && cp -r target/quarkus-app messenger/quarkus-app    # stage the built app
+MINIO_ENDPOINT=http://<browser-reachable-host>:9000 docker compose up -d # joins masterprofile_default
+```
+
+`docker-compose.yml` parameterises every external dependency by env var (see
+[Configuration](#️-configuration)). **Two deployment-critical points:**
+
+- 🔐 **Run only behind the Ory Oathkeeper edge.** The service trusts `X-User-*` headers and does **not**
+  validate JWTs, so a directly-exposed `:8080` lets anyone forge any identity (incl. `X-Role: ADMIN`
+  against `/api/system/notify`). Publish exclusively via the edge; never expose the port to the internet.
+- 🪣 **`MINIO_ENDPOINT` must be browser-reachable.** It is used both for the app's own calls **and** is
+  baked into presigned upload/download URLs, so set it to the host the frontend can reach (staging IP /
+  prod CDN). The `localhost:9000` default is local-dev only. *(Split-horizon public-vs-internal MinIO
+  URLs — as the Order service does — is a tracked follow-up.)*
 
 ---
 
@@ -391,20 +426,27 @@ Current coverage: **159 unit/integration tests + 18 Karate scenarios**, all gree
 **Implemented & tested:** chat lifecycle (idempotent create, list, soft-delete, blacklist),
 send-guard + `SENT` ACK, online delivery + offline hold, **ACK-driven `SENT→DELIVERED→READ`** + read
 receipts, immutability + conditional delete + **order-scoped freeze**, frozen retention class
-(primitive + **scheduled retention sweep**), presence + **offline-on-delivery-failure** +
-**heartbeat/pong reaper** (FR-PRES-03), watermark GC + **outbox-rehydration on Redis loss**,
-**single-active-session**, **read receipts over WS** + **push to sender** (FR-MSG-06),
+(+ **scheduled retention sweep**), presence + **offline-on-delivery-failure** + **heartbeat/pong
+reaper** + **overload reaper**, watermark GC + **outbox-rehydration on Redis loss** + **poller live
+re-delivery**, **single-active-session**, **read receipts over WS** + **push to sender**,
 **cursor-paginated** reconnect history, Ory auth + membership authorization, opaque metadata + tz timestamps.
+- ✅ **Kafka event-adapters** — `order.events` consumer: create-chat (UC-H01) + freeze (UC-H04),
+  dual-driven over the REST core ops (the topic itself is provisioned on the Order side).
+- ✅ **Attachments** — MinIO two-phase presigned upload (concept §10 / ADR-010), verified e2e.
+- ✅ **WebRTC signaling** (Strategy S) — delivered + non-persistent; covered by the WS e2e suite.
+- ✅ **Strategy C + dead-letter** — must-arrive system notices, eager-draft + retract-on-ACK (ADR-014).
 
 **Partial / deferred:**
 
-- 🟡 **Per-conversation ordering** (FR-MSG-07) — not yet implemented.
-- 🟡 **Event (Kafka) adapters** for create-chat & freeze (FR-CHAT-01 / FR-ARCH-01 / FR-RET-03) —
-  deferred; REST side is live.
-- 🟡 **Strategy C** (retry-then-purge) — not a distinct pipeline yet (shares the cached path).
-- 🟡 **WebRTC signaling** (FR-SIG) — pipeline routes exist, no e2e test.
+- 🟡 **Per-conversation ordering** (FR-MSG-07) — not implemented (client re-sorts by monotonic id; ADR-013).
 - ⚪ **Credit rate-limiting** (FR-SEC-03) — optional v1, deferred.
-- ⚪ **Attachments** (MinIO two-phase upload) — designed, not built.
+- 🟠 **Pre-release / OPS** (not done): graceful-shutdown drain, durable dead-letter store + give-up
+  reaper (ADR-014 follow-ups), Prometheus dashboards/alerts, TLS, WS-resume contract, envelope
+  versioning, MinIO split-horizon public URL. **Must sit behind the Ory edge** (see Deployment).
+
+> **Readiness:** functionally complete for the M-stage core + the four slices above, well-tested
+> (≈298 unit + 29 e2e), but **not yet pre-release** — the OPS/hardening layer, prod deployment behind
+> the Ory edge, and a staging run remain.
 
 ---
 
