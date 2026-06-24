@@ -456,6 +456,19 @@ Current coverage: **≈298 unit/integration tests** (`./mvnw test`, JDK 25) **+ 
 + 9 JDK-WebSocket), all green. The WS suite covers delivery, SENT→DELIVERED→READ, signaling, presence,
 offline→reconnect redelivery, and Strategy-C system notices.
 
+**Load testing** (`loadtest/`, Gatling) — each virtual user is a chat pair (create chat → connect
+master+client WS → stream CHAT_IN), so the full inbound pipeline + persistence + delivery + Tetris
+run under load. Against a running app:
+
+```bash
+cd loadtest && JAVA_HOME=/path/to/jdk-21 mvn gatling:test \
+  -Dgatling.simulationClass=load.MessengerLoadSimulation \
+  -Dload.users=200 -Dload.ramp=60 -Dload.msgs=30        # → HTML report under target/gatling/
+```
+
+Watch the server side in parallel via Prometheus `/q/metrics` (queue depth, outbox lag, safe-delete
+watermark, WS sessions, JVM/Redis).
+
 ---
 
 ## 🚢 Deployment

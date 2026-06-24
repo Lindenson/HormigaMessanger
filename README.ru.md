@@ -464,6 +464,19 @@ cd e2etests && JAVA_HOME=/path/to/jdk-21 mvn test -Dkarate.env=dev      # 20 Kar
 9 JDK-WebSocket), все зелёные. WS-набор покрывает доставку, `SENT→DELIVERED→READ`, сигнализацию,
 presence, offline→reconnect redelivery и системные нотисы Strategy C.
 
+**Нагрузочное тестирование** (`loadtest/`, Gatling) — каждый виртуальный пользователь = пара чата
+(создать чат → подключить WS master+client → стримить CHAT_IN), так что под нагрузкой работает весь
+входящий конвейер + персистентность + доставка + Tetris. Против запущенного приложения:
+
+```bash
+cd loadtest && JAVA_HOME=/path/to/jdk-21 mvn gatling:test \
+  -Dgatling.simulationClass=load.MessengerLoadSimulation \
+  -Dload.users=200 -Dload.ramp=60 -Dload.msgs=30        # → HTML-отчёт в target/gatling/
+```
+
+Параллельно смотреть серверную сторону через Prometheus `/q/metrics` (глубина очереди, лаг outbox,
+safe-delete watermark, WS-сессии, JVM/Redis).
+
 ---
 
 ## 🚢 Развёртывание
