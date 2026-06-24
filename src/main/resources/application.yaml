@@ -58,6 +58,13 @@
     messages:
       inbound:
         queue-size: 3000
+        # Group-commit of the inbound persist (plan B). Publisher runs PARALLEL; these coalesce
+        # concurrent history+outbox writes into one tx per batch and run several tx concurrently
+        # to fill the otherwise ~95%-idle DB pool (keep max-concurrent-batches ≤ DB pool size).
+        persist-batch:
+          max-size: 64
+          linger-ms: 5
+          max-concurrent-batches: 8
       outbound:
         batch-size: 1500
         queue-size: 5000

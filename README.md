@@ -411,13 +411,27 @@ WebSocket max message size is 64 KiB.
 
 ---
 
+## 🚀 Performance
+
+The inbound path sustains **~3,000 messages/second at p95 19 ms** (300 chat pairs / 600 live WebSocket
+clients, 4-minute hold), with no message loss, no full GC and a flat memory profile in steady state —
+comfortably past the ≥ 1,000 msg/s target. Throughput comes from a **parallel inbound pipeline that
+group-commits the `history+outbox` writes** (`InboundPersistBatcher` → one transaction per batch, with
+per-message poison-row isolation); every message is still persisted, delivered and `SENT`-acked
+individually.
+
+**Full report, methodology and resource profile: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).**
+
 ## ⚡ Performance tuning
 
 All knobs live under `processing.*` in `application.yaml`, are env-overridable, and apply in the `prod` profile. Defaults below are the shipped values.
 
 | Group | Param | Default | What it does | Raise ↑ / Lower ↓ |
 |---|---|---|---|---|
-| Inbound backpressure | `processing.messages.inbound.queue-size` | `3000` | Admission gate on in-flight inbound (client→router) messages; over the cap `publish()` records a drop and emits a `SERVICE_OUT` overload notice. The only bound on the inbound path (Mutiny buffers unconditionally behind it). | ↑ fewer drops/overload notices in bursts, but more retained `Message` graphs (heap/GC) and deeper head-of-line latency (SEQUENTIAL). ↓ bounded memory + lower queueing latency, but sheds load and surfaces overload sooner. |
+| Inbound backpressure | `processing.messages.inbound.queue-size` | `3000` | Admission gate on in-flight inbound (client→router) messages; over the cap `publish()` records a drop and emits a `SERVICE_OUT` overload notice. The only bound on the inbound path (Mutiny buffers unconditionally behind it). The publisher runs **PARALLEL** so many `routeIn` flows run at once (feeds the persist batcher below). | ↑ fewer drops/overload notices in bursts, but more retained `Message` graphs (heap/GC). ↓ bounded memory + lower queueing latency, but sheds load and surfaces overload sooner. |
+| Inbound persist (plan B) | `processing.messages.inbound.persist-batch.max-size` | `64` | Max messages coalesced into one `history+outbox` transaction. The single biggest throughput lever — profiling showed the per-message persist round-trip, serialized, was the whole ceiling (load findings R1→R3: ~9× at 200 pairs, p95 ~50× lower). | ↑ fatter transactions, fewer commits/fsync, higher peak throughput; a rolled-back batch retries more rows individually. ↓ smaller batches → more commits, approaches the old 1-tx-per-message cost. |
+| Inbound persist (plan B) | `processing.messages.inbound.persist-batch.linger-ms` | `5` | Max time a partial batch waits before flushing — the only latency this adds to a message. | ↑ lets batches fill more under light load (better amortization) at the cost of that much added send→persist latency. ↓ flushes sooner (lower latency), smaller batches under light load. |
+| Inbound persist (plan B) | `processing.messages.inbound.persist-batch.max-concurrent-batches` | `8` | Batch transactions in flight at once (`merge(N)`). Fills the otherwise ~95%-idle DB pool. | ↑ more parallel persists → higher throughput until the DB or pool saturates. **Keep ≤ the DB pool size (20).** ↓ fewer concurrent transactions, lower DB contention, lower ceiling. |
 | Outbox / outbound | `processing.messages.outbound.batch-size` | `1500` | Max rows claimed per outbox drain (`LIMIT` in the SKIP-LOCKED claim); each row is leased (5s) and emitted one-by-one into the outbound stream. Floored to 50. | ↑ drains backlog in fewer cycles, amortizes the claim cost, but bursts the outbound queue and raises per-poll heap/GC. ↓ slower drain/recovery, gentler bursts. Keep `< queue-size`. |
 | Outbox / outbound | `processing.messages.outbound.queue-size` | `5000` | Hard capacity of the in-memory outbound dispatch queue; over it `publish()` drops. Also gates the poller — it only fetches when the queue is empty. | ↑ tolerates bigger publish bursts before drops, at a larger worst-case heap. ↓ saturates and drops sooner; re-polls sooner. |
 | Outbox / outbound | `processing.messages.outbound.polling-ms` | `1000` | Base outbox poll cadence (`@Scheduled`, SKIP guards re-entry); also the floor the feedback regulator modulates upward. | ↑ less CPU/DB poll traffic, higher redelivery latency. ↓ lower latency + faster drain, but more wake-ups and SKIP-LOCKED queries even when idle. Sets the best-case latency floor. |
@@ -439,7 +453,8 @@ All knobs live under `processing.*` in `application.yaml`, are env-overridable, 
 
 ### Trade-offs (cross-cutting)
 
-- **Bigger inbound/outbound queues + batch-size** → more RAM and higher latency-under-overload (deeper SEQUENTIAL backlogs), but fewer drops. Keep `batch-size < outbound queue-size` or a drain burst fills the queue and starts dropping.
+- **Bigger inbound/outbound queues + batch-size** → more RAM and higher latency-under-overload (deeper backlogs), but fewer drops. Keep `batch-size < outbound queue-size` or a drain burst fills the queue and starts dropping.
+- **Inbound persist group-commit (plan B)** → `persist-batch.{max-size, linger-ms, max-concurrent-batches}` set the inbound write throughput. Bigger size + more concurrency = higher ceiling; the only cost is `linger-ms` of added latency per message and `max-size` rows at risk if a batch transaction rolls back (it then retries each individually). Keep `max-concurrent-batches ≤ DB pool size`.
 - **Faster `polling-ms` / lower `additional-ms`** → lower delivery latency and faster drain, but more DB SKIP-LOCKED claims and Redis round-trips per second, even when idle.
 - **Aggressive feedback growth (`adjustment-factor` ↑, `recovery-factor` →1)** → sheds load and cuts drops faster with fewer wasted polls, but slower drain and higher tail latency after a burst clears; a low `recovery-factor` recovers fast but can oscillate.
 - **Idempotent `ttl-seconds` too low** → redeliveries lapse the dedup window and double-deliver; **too high** → more resident Redis keys (memory). Keep it above the retry + poll + max feedback-delay horizon.

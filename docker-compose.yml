@@ -26,6 +26,10 @@ services:
       - "8080:8080"
     environment:
       QUARKUS_PROFILE: prod
+      # Cap glibc malloc arenas (default 8×cores). On a many-core host this collapses tens of GB of
+      # reserved VIRTUAL address space (a reservation, not RAM) and trims RSS a little, with negligible
+      # throughput impact. The real footprint stays ~2 GB under load — see docs/PERFORMANCE.md.
+      MALLOC_ARENA_MAX: "2"
       # ── PostgreSQL (history + outbox + conversation + attachment + dead_letter) ──
       DB_HOST: postgres
       DB_PORT: "5432"

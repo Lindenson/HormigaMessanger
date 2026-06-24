@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.hormigas.ws.core.backpressure.BackpressureBuilder.Mode.SEQUENTIAL;
+import static org.hormigas.ws.core.backpressure.BackpressureBuilder.Mode.PARALLEL;
 import static org.hormigas.ws.core.backpressure.BackpressureBuilder.PublisherKind.INCOMING;
 
 
@@ -54,7 +54,10 @@ public class InboundPublisher implements BackpressurePublisher<Message> {
                 .withQueueSizeCounter(queueSize)
                 .withEmitter(emitter)
                 .withMetrics(metrics)
-                .withMode(SEQUENTIAL)
+                // PARALLEL (merge): many routeIn flows run concurrently so the persist batcher can
+                // actually accumulate a batch. Under SEQUENTIAL the publisher awaited each message
+                // before emitting the next, so a batch would never fill (plan B / load findings R2).
+                .withMode(PARALLEL)
                 .build()
                 // F2: a terminal stream error must not permanently disable the publisher — re-subscribe
                 // with backoff (the emitter consumer resets the counter on each (re)subscribe).

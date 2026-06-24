@@ -15,7 +15,10 @@ import org.hormigas.ws.infrastructure.persistance.postgres.outbox.OutboxPostgres
 import org.hormigas.ws.ports.outbox.OutboxManager;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -73,6 +76,66 @@ public class OutboxPostgresAdapter implements OutboxManager<Message> {
                 .onFailure().recoverWithItem(er -> {
                     log.error("Error saving message: {}", message, er);
                     return StageResult.failed();
+                });
+    }
+
+    // ----------------------------------------------------------------------
+    // Group-commit: persist many messages' history+outbox rows in ONE transaction (plan B)
+    // ----------------------------------------------------------------------
+    @Override
+    public Uni<Map<String, StageResult<Message>>> saveBatch(List<Message> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return Uni.createFrom().item(Map.of());
+        }
+
+        // Partition: messages that fail minimal validation (or map to null) never reach the DB —
+        // they are FAILED up-front so one bad input cannot poison the whole transaction.
+        Map<String, StageResult<Message>> results = new HashMap<>();
+        List<Message> valid = new ArrayList<>();
+        List<HistoryRow> historyRows = new ArrayList<>();
+        List<OutboxMessage> outboxRows = new ArrayList<>();
+
+        for (Message message : messages) {
+            OutboxMessage outboxMessage = isValidForSave(message) ? mapper.toOutboxMessage(message) : null;
+            HistoryRow historyRow = isValidForSave(message) ? mapper.toHistoryRow(message) : null;
+            if (outboxMessage == null || historyRow == null) {
+                log.warn("Message failed validation/mapping and will not be batch-saved: {}", message);
+                if (message != null && message.getMessageId() != null) {
+                    results.put(message.getMessageId(), StageResult.failed());
+                }
+                continue;
+            }
+            valid.add(message);
+            historyRows.add(historyRow);
+            outboxRows.add(outboxMessage);
+        }
+
+        if (valid.isEmpty()) {
+            return Uni.createFrom().item(results);
+        }
+
+        return repo.insertHistoryAndOutboxTransactional(historyRows, outboxRows)
+                .onItem().transform(inserted -> {
+                    // Match inserted rows back to their message by messageId — RETURNING order is not guaranteed.
+                    Map<String, Long> idByMessageId = new HashMap<>();
+                    if (inserted != null) {
+                        for (Inserted row : inserted) {
+                            idByMessageId.put(row.messageId(), row.id());
+                        }
+                    }
+                    for (Message message : valid) {
+                        Long dbId = idByMessageId.get(message.getMessageId());
+                        results.put(message.getMessageId(),
+                                dbId != null ? StageResult.updated(message.withId(dbId)) : StageResult.failed());
+                    }
+                    return results;
+                })
+                .onFailure().recoverWithItem(er -> {
+                    log.error("Error batch-saving {} messages (tx rolled back) — all FAILED", valid.size(), er);
+                    for (Message message : valid) {
+                        results.put(message.getMessageId(), StageResult.failed());
+                    }
+                    return results;
                 });
     }
 

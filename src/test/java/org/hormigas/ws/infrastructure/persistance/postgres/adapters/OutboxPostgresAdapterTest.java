@@ -144,4 +144,72 @@ class OutboxPostgresAdapterTest {
         Integer result = adapter.collectGarbage(1L).await().indefinitely();
         assertEquals(0, result);
     }
+
+    // ------------------------------------------------------------------
+    // saveBatch (group-commit / plan B)
+    // ------------------------------------------------------------------
+
+    private Message validMessage(String id) {
+        Message m = mock(Message.class);
+        when(m.getMessageId()).thenReturn(id);
+        when(m.getSenderId()).thenReturn("sender");
+        when(m.getRecipientId()).thenReturn("recipient");
+        when(m.getPayload()).thenReturn(Message.Payload.builder().kind("text").body("b").build());
+        when(m.withId(org.mockito.ArgumentMatchers.anyLong())).thenReturn(m);
+        return m;
+    }
+
+    @Test
+    void saveBatch_matchesInsertedByMessageId_notIndex() {
+        Message m1 = validMessage("msg-1");
+        Message m2 = validMessage("msg-2");
+        when(mapper.toOutboxMessage(any())).thenReturn(mock(OutboxMessage.class));
+        when(mapper.toHistoryRow(any())).thenReturn(mock(HistoryRow.class));
+        // RETURNING order is reversed vs input — matching MUST be by messageId, not position.
+        when(repo.insertHistoryAndOutboxTransactional(any(), any()))
+                .thenReturn(Uni.createFrom().item(List.of(new Inserted(20, "msg-2"), new Inserted(10, "msg-1"))));
+
+        var results = adapter.saveBatch(List.of(m1, m2)).await().indefinitely();
+
+        assertEquals(2, results.size());
+        assertTrue(results.get("msg-1").isUpdated());
+        assertTrue(results.get("msg-2").isUpdated());
+    }
+
+    @Test
+    void saveBatch_invalidMessageFailedUpFront_validStillPersisted() {
+        Message valid = validMessage("ok-1");
+        Message invalid = mock(Message.class); // all null → fails validation, must NOT reach the DB
+        when(invalid.getMessageId()).thenReturn("bad-1");
+        when(mapper.toOutboxMessage(valid)).thenReturn(mock(OutboxMessage.class));
+        when(mapper.toHistoryRow(valid)).thenReturn(mock(HistoryRow.class));
+        when(repo.insertHistoryAndOutboxTransactional(any(), any()))
+                .thenReturn(Uni.createFrom().item(List.of(new Inserted(1, "ok-1"))));
+
+        var results = adapter.saveBatch(List.of(valid, invalid)).await().indefinitely();
+
+        assertTrue(results.get("ok-1").isUpdated());
+        assertTrue(results.get("bad-1").isFailed());
+    }
+
+    @Test
+    void saveBatch_transactionFailure_allValidFailed() {
+        Message m1 = validMessage("msg-1");
+        Message m2 = validMessage("msg-2");
+        when(mapper.toOutboxMessage(any())).thenReturn(mock(OutboxMessage.class));
+        when(mapper.toHistoryRow(any())).thenReturn(mock(HistoryRow.class));
+        when(repo.insertHistoryAndOutboxTransactional(any(), any()))
+                .thenReturn(Uni.createFrom().failure(new RuntimeException("tx rolled back")));
+
+        var results = adapter.saveBatch(List.of(m1, m2)).await().indefinitely();
+
+        assertTrue(results.get("msg-1").isFailed());
+        assertTrue(results.get("msg-2").isFailed());
+    }
+
+    @Test
+    void saveBatch_empty_returnsEmptyMap() {
+        var results = adapter.saveBatch(List.of()).await().indefinitely();
+        assertTrue(results.isEmpty());
+    }
 }
