@@ -91,8 +91,8 @@ public class MessageValidator implements Validator<Message> {
         checkId(errors, msg.getConversationId(), "conversationId");
         checkId(errors, msg.getMessageId(), "messageId");
 
-        // CHAT_ACK requires correlationId
-        if (msg.getType() == MessageType.CHAT_ACK) {
+        // CHAT_ACK / SYSTEM_ACK reference the acked message via correlationId
+        if (msg.getType() == MessageType.CHAT_ACK || msg.getType() == MessageType.SYSTEM_ACK) {
             checkId(errors, msg.getCorrelationId(), "correlationId");
         }
 
@@ -112,7 +112,7 @@ public class MessageValidator implements Validator<Message> {
         }
 
         switch (msg.getType()) {
-            case CHAT_IN, SIGNAL_IN, CHAT_ACK, READ_IN -> {
+            case CHAT_IN, SIGNAL_IN, CHAT_ACK, READ_IN, SYSTEM_ACK -> {
                 // allowed
             }
             default -> errors.add("type: unsupported inbound message type: " + msg.getType());
@@ -189,7 +189,8 @@ public class MessageValidator implements Validator<Message> {
     private void validatePayload(Message msg, List<String> errors) {
         // A delivery ACK / read receipt carries no payload — it references the conversation/message
         // via ids. Requiring a payload here would (silently) reject every client ACK and read event.
-        if (msg.getType() == MessageType.CHAT_ACK || msg.getType() == MessageType.READ_IN) {
+        if (msg.getType() == MessageType.CHAT_ACK || msg.getType() == MessageType.READ_IN
+                || msg.getType() == MessageType.SYSTEM_ACK) {
             return;
         }
 

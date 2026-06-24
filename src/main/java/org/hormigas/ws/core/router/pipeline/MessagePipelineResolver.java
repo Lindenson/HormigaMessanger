@@ -28,6 +28,8 @@ public class MessagePipelineResolver implements PipelineResolver<Message, Messag
         routingMatrix.put(SIGNAL_OUT, OUTBOUND_CACHED);
         // SERVICE
         routingMatrix.put(SERVICE_OUT, OUTBOUND_DIRECT);
+        // SYSTEM (Strategy C) — deliver + cache (dedup), NO Tetris mark (stays out of the A watermark)
+        routingMatrix.put(SYSTEM_OUT, OUTBOUND_TRANSIENT);
 
         // IN - MESSAGES GENERATED (RECEIVED) FROM CHANEL
         // CHAT

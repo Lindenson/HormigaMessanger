@@ -18,5 +18,11 @@ public enum MessageType {
     PRESENT_JOIN,
     PRESENT_LEAVE,
 
-    SERVICE_OUT
+    SERVICE_OUT,
+
+    // Strategy C — must-arrive system notices (ADR-014). SYSTEM_OUT is server→client, durable in the
+    // dead_letter draft + delivered via the transient outbox path; SYSTEM_ACK is the client's
+    // delivery confirmation (correlationId = the notice's messageId) that retracts the draft.
+    SYSTEM_OUT,
+    SYSTEM_ACK
 }

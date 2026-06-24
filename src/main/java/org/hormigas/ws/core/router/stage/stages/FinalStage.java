@@ -27,7 +27,7 @@ public class FinalStage implements PipelineStage<RouterContext<Message>> {
             switch (pipelineType) {
                 case INBOUND_PERSISTENT -> done = ctx.getPersisted().isSuccess();
                 case INBOUND_CACHED, INBOUND_DIRECT -> done = ctx.getDelivered().isSuccess();
-                case OUTBOUND_CACHED, OUTBOUND_DIRECT -> done = ctx.getDelivered().isSuccess();
+                case OUTBOUND_CACHED, OUTBOUND_DIRECT, OUTBOUND_TRANSIENT -> done = ctx.getDelivered().isSuccess();
                 case ACK_PERSISTENT -> done = ctx.getAcknowledged().isSuccess();
                 case ACK_CACHED -> done = ctx.getCached().isSuccess();
                 default -> done = false;

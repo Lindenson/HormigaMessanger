@@ -57,6 +57,13 @@ public class MessageOutboundRouter implements OutboundRouter<Message> {
             case OUTBOUND_DIRECT -> deliveryStage.apply(context)
                     .onItem().transformToUni(finalStage::apply);
 
+            // Strategy C: deliver + cache (dedup across poller re-fetches) but NO Tetris mark — a
+            // system notice must not enter the watermark (else it could head-of-line-block A's GC).
+            // Durability is the dead_letter DRAFT, not the outbox row (ADR-014).
+            case OUTBOUND_TRANSIENT -> deliveryStage.apply(context)
+                    .onItem().transformToUni(cacheStage::apply)
+                    .onItem().transformToUni(finalStage::apply);
+
             case SKIP -> finalStage.apply(context);
 
             default -> {

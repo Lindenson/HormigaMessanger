@@ -77,6 +77,29 @@ public class OutboxPostgresAdapter implements OutboxManager<Message> {
     }
 
     // ----------------------------------------------------------------------
+    // Save to the OUTBOX only (no History) — Strategy C transient delivery vehicle (ADR-014)
+    // ----------------------------------------------------------------------
+    @Override
+    public Uni<StageResult<Message>> saveTransient(Message message) {
+        if (!isValidForSave(message)) {
+            log.warn("Message failed minimal validation and will not be saved (transient): {}", message);
+            return Uni.createFrom().item(StageResult.failed());
+        }
+        OutboxMessage outboxMessage = mapper.toOutboxMessage(message);
+        if (outboxMessage == null) {
+            log.warn("Mapper returned null, cannot save (transient): {}", message);
+            return Uni.createFrom().item(StageResult.failed());
+        }
+        // empty history list → the repo inserts only the outbox row (guarded by !historyRows.isEmpty())
+        return repo.insertHistoryAndOutboxTransactional(List.of(), List.of(outboxMessage))
+                .onItem().transform(inserted -> toStageResult(message, inserted))
+                .onFailure().recoverWithItem(er -> {
+                    log.error("Error saving transient message: {}", message, er);
+                    return StageResult.failed();
+                });
+    }
+
+    // ----------------------------------------------------------------------
     // Remove a message by correlationId
     // ----------------------------------------------------------------------
     @Override

@@ -7,6 +7,7 @@ public interface PipelineResolver<T, D> {
         INBOUND_DIRECT,
         OUTBOUND_CACHED,
         OUTBOUND_DIRECT,
+        OUTBOUND_TRANSIENT,
         ACK_PERSISTENT,
         ACK_CACHED,
         SKIP

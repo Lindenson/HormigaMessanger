@@ -55,6 +55,9 @@ public class WebsocketService {
     @Inject
     DeliveryChannel<Message> deliveryChannel;
 
+    @Inject
+    org.hormigas.ws.ports.deadletter.DeliveryConfirmations confirmations;
+
 
     private final ChannelFilter<Message, WebSocketConnection> channelFilter = new InboundMessageFilter<>();
 
@@ -137,6 +140,12 @@ public class WebsocketService {
             // READ_OUT to the peer (the original sender) — fire-and-forget. REST /read is the fallback.
             if (message.getType() == MessageType.READ_IN) {
                 return markReadAndNotify(message.getConversationId(), clientSession.getClientId());
+            }
+
+            // System-notice delivery confirmation (Strategy C, ADR-014): record the confirmation so
+            // the cleanup sweep retracts the dead_letter DRAFT. correlationId = the notice's messageId.
+            if (message.getType() == MessageType.SYSTEM_ACK) {
+                return confirmations.confirm(message.getCorrelationId());
             }
 
             if (!incomingPublisher.publish(message)) {
