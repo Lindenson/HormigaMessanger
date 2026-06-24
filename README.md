@@ -6,9 +6,9 @@
 >
 > 🌍 Other languages: [Russian](./README.ru.md)
 
-It sits alongside the other Hormigas services (MasterProfile `:8080`, ClientProfile `:8081`,
-Order/TaskManager `:8082`) and lets the two parties of a job — a **master** and a **client** —
-coordinate: discuss scope, agree terms, share files, and receive system notifications.
+It runs alongside the other Hormigas services (MasterProfile `:8080`, ClientProfile `:8081`,
+Order/TaskManager `:8082`) and gives the two parties of a job — a **master** and a **client** —
+one place to coordinate: discuss scope, agree terms, share files, and receive system notifications.
 
 > **Source-of-truth note.** This README is generated from the approved **concept** and the
 > **functional requirements (FR)** held in the architecture digital twin
@@ -46,9 +46,9 @@ coordinate: discuss scope, agree terms, share files, and receive system notifica
 ## 🚀 What it is
 
 A **reactive pipeline** messenger: every message flows through asynchronous stages
-(validate → persist → ACK → deliver → finalize), assembled dynamically by a resolver from the
-message type. A **clean domain (core)** is isolated from infrastructure by **ports/adapters**, so
-PostgreSQL, Redis and WebSocket transports can be swapped without touching business logic.
+(validate → persist → ACK → deliver → finalize) that a resolver assembles on the fly from the
+message type. **Ports and adapters** wall the **clean domain (core)** off from infrastructure, so
+PostgreSQL, Redis and WebSocket transports swap out without touching business logic.
 
 ### Core technologies
 
@@ -85,7 +85,7 @@ PostgreSQL, Redis and WebSocket transports can be swapped without touching busin
 
 > **Dual-driven principle.** Every event-capable operation (create chat, freeze) is **one core use
 > case** exposed via **two inbound adapters — REST and an event consumer**. Triggers are
-> interchangeable; the use case is the mechanism. (Today: REST is live, the event consumer is deferred.)
+> interchangeable; the use case is the mechanism. (Both are live today: the REST endpoint and the Kafka `order.events` consumer.)
 
 ---
 
@@ -101,9 +101,9 @@ Each message kind maps to one of four **handling strategies** (orthogonal proper
 | **C — retry-then-purge** | transient (outbox) | yes | yes | no | must-arrive system notices |
 | **S — signaling** | no (transient) | yes | yes | no | **WebRTC** call setup |
 
-> Implemented today: **A** (chat) and **S** (signaling routes). **B** covers presence. **C**
-> (retry-then-purge for system notices) is **specified but not yet a distinct pipeline** — it shares
-> the cached path with S until its own retention semantics are wired.
+> All four are implemented: **A** (chat), **S** (signaling), **B** (presence), and **C** — must-arrive
+> system notices delivered over the dedicated `OUTBOUND_TRANSIENT` pipeline, durable as an eager
+> `dead_letter` draft that a `SYSTEM_ACK` retracts (ADR-014).
 
 ### Wire `MessageType` values
 
@@ -126,8 +126,8 @@ Persisted status machine: **`SENT → DELIVERED → READ`**.
 
 - **SENT** — message durably written (History + Outbox in one transaction) and ACKed to the sender.
 - **DELIVERED** — set when the **recipient sends a delivery ACK** (`CHAT_ACK`, `correlationId` = the
-  delivered messageId). A WS push is best-effort, so DELIVERED is ACK-confirmed, not push-assumed. The
-  same ACK advances the GC watermark.
+  delivered messageId). A WS push is best-effort, so DELIVERED means ACK-confirmed — never merely push-assumed. That
+  same ACK also advances the GC watermark.
 - **READ** — the recipient sends a `READ_IN` over WS (fire-and-forget); the server persists `READ`
   and pushes a `READ_OUT` to the sender (same realtime channel as DELIVERED). `POST /api/chats/{id}/read`
   is the reconnect/bulk fallback — both go through the same core `markRead`.
@@ -155,8 +155,8 @@ Persisted status machine: **`SENT → DELIVERED → READ`**.
   `POST /api/chats/{id}/freeze {"orderId": "..."}`.
 - **Retention classes** — normal history uses the per-kind TTL; **frozen** messages have their
   **own, longer** TTL (a separate class, not exemption). The repository honours both
-  (`deleteOlderThan` excludes frozen; `deleteFrozenOlderThan` for the frozen class). *(Scheduled
-  wiring of the retention sweeps is a remaining task.)*
+  (`deleteOlderThan` excludes frozen; `deleteFrozenOlderThan` for the frozen class), and a scheduled
+  sweep (`HistoryRetentionScheduler`) applies each class on its own cadence.
 
 ---
 
@@ -173,7 +173,7 @@ Persisted status machine: **`SENT → DELIVERED → READ`**.
 
 ### 📐 Delivery contract & invariants
 
-The system is **no-loss with at-least-once delivery**, not live-push-guaranteed. Precisely:
+The system guarantees **no loss with at-least-once delivery** — not a live push. Precisely:
 
 - **`message_history` is the single source of truth** and never loses a message within its retention
   TTL (frozen messages get a longer class). The **Outbox is a transient delivery buffer** and *may*
@@ -210,14 +210,14 @@ The **pipeline** is a state machine assembled per message type by a resolver
 5. **Delivery** — over WebSocket; marks `DELIVERED` on a successful push.
 6. **Finalization** — error handling / compensation.
 
-A **HexagonalArchitectureTest** (ArchUnit) ratchets layering at build time: the domain stays
-framework-free, the core depends only on ports, and ports never depend on core or infrastructure.
+A **HexagonalArchitectureTest** (ArchUnit) enforces the layering at build time: the domain stays
+framework-free, the core depends only on ports, and ports never reach back into core or infrastructure.
 
 ### Reactive model & load management
 
-Stages run asynchronously with reactive buffers between them; on overload, outbox reading slows
-(adaptive `Regulator` feedback) and recovers automatically. All throughput/latency/buffer metrics
-export to **Prometheus** (`/q/metrics`).
+Stages run asynchronously, with reactive buffers between them; under overload, outbox reading
+throttles itself (adaptive `Regulator` feedback) and recovers on its own. Every throughput, latency
+and buffer metric exports to **Prometheus** (`/q/metrics`).
 
 ---
 
@@ -244,8 +244,8 @@ export to **Prometheus** (`/q/metrics`).
 
 ## 🟢 Presence ↔ GC coupling
 
-Presence is a **correctness dependency of GC**: the watermark advances on delivery, which requires
-the recipient to be *accurately* online — a phantom-online client stalls GC. Therefore:
+Presence is a **correctness dependency of GC**: the watermark advances on delivery, and delivery
+demands an *accurately* online recipient — one phantom-online client stalls GC. Therefore:
 
 - **Presence (Redis)** gates *live delivery attempts* (offline → hold in Outbox); it is **not** the
   GC's source of truth. The GC watermark advances on a **recipient ACK** or on **connection close**.
@@ -260,8 +260,8 @@ the recipient to be *accurately* online — a phantom-online client stalls GC. T
 
 ## 🛡️ Idempotency
 
-- **Server:** best-effort dedup via a short-TTL buffer keyed by `messageId` (Redis), sized to cover
-  network + ACK-flush + scheduler latency.
+- **Server:** best-effort dedup through a short-TTL buffer keyed by `messageId` (Redis), sized to
+  absorb network + ACK-flush + scheduler latency.
 - **Client:** authoritative dedup by `messageId` — which is why exactly-once is not a server goal.
   Rare wire duplicates are acceptable; the user never sees one.
 
@@ -269,8 +269,8 @@ the recipient to be *accurately* online — a phantom-online client stalls GC. T
 
 ## 🔌 Reconnect & history sync
 
-On (re)connect a client **pulls its conversation history via REST**, then resumes live WS delivery —
-this read-through is what guarantees nothing is missed across disconnects.
+On (re)connect a client **pulls its conversation history via REST**, then resumes live WS delivery.
+That read-through is exactly what guarantees nothing slips through across disconnects.
 
 History sync is **conversation-scoped and cursor-paginated**:
 `GET /api/chats/{id}/messages?since=<last messageId>&limit=<n>` (default 200, max 500). Because
@@ -301,7 +301,7 @@ History sync is **conversation-scoped and cursor-paginated**:
 ### WebSocket protocol
 
 Connect to `ws://<host>/ws` with the **Ory identity headers on the handshake** (same as REST). The
-server trusts the session's `X-User-Id` as the authenticated sender. Frames are JSON `Message` objects.
+server treats the session's `X-User-Id` as the authenticated sender, and every frame is a JSON `Message` object.
 
 **Frame schema** (fields used vary by `type`):
 
@@ -370,8 +370,8 @@ id** (ordering is client-authoritative). Missing/blank identity on the handshake
 
 ### Kafka — `order.events` (inbound)
 
-The service **consumes** `order.events` (channel `order-events-in`, SmallRye Kafka) as the second
-driving adapter over the create-chat / freeze core ops (concept §2, ADR-007). JSON envelope:
+The service **consumes** `order.events` (channel `order-events-in`, SmallRye Kafka) — the second
+driving adapter riding the same create-chat / freeze core ops (concept §2, ADR-007). JSON envelope:
 
 ```jsonc
 {
@@ -413,14 +413,24 @@ WebSocket max message size is 64 KiB.
 
 ## 🚀 Performance
 
-The inbound path sustains **~3,000 messages/second at p95 19 ms** (300 chat pairs / 600 live WebSocket
-clients, 4-minute hold), with no message loss, no full GC and a flat memory profile in steady state —
-comfortably past the ≥ 1,000 msg/s target. Throughput comes from a **parallel inbound pipeline that
-group-commits the `history+outbox` writes** (`InboundPersistBatcher` → one transaction per batch, with
-per-message poison-row isolation); every message is still persisted, delivered and `SENT`-acked
-individually.
+**~3,000 messages/second, sustained, at a 20 ms p95** — held flat for minutes at 600 live WebSocket
+clients, with no message loss, no full GC and a memory footprint that settles and stays put. Well past
+the ≥ 1,000 msg/s target.
 
-**Full report, methodology and resource profile: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).**
+```mermaid
+xychart-beta
+    title "Sustained throughput (messages / second)"
+    x-axis ["50 pairs", "100 pairs", "200 pairs", "300 pairs"]
+    y-axis "msg/s" 0 --> 3200
+    bar [520, 1040, 2040, 3000]
+```
+
+The lever is a **parallel inbound pipeline that group-commits the `history+outbox` writes**: many
+messages are coalesced into a single transaction (`InboundPersistBatcher`), several transactions run
+concurrently, and a rolled-back batch retries row-by-row so one bad message fails alone. Everything
+below the persist — delivery, the `SENT` ack, caching, the watermark — stays strictly per-message.
+
+📈 **Full report — scaling curve, memory profile, charts and tuning: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).**
 
 ## ⚡ Performance tuning
 
@@ -428,28 +438,28 @@ All knobs live under `processing.*` in `application.yaml`, are env-overridable, 
 
 | Group | Param | Default | What it does | Raise ↑ / Lower ↓ |
 |---|---|---|---|---|
-| Inbound backpressure | `processing.messages.inbound.queue-size` | `3000` | Admission gate on in-flight inbound (client→router) messages; over the cap `publish()` records a drop and emits a `SERVICE_OUT` overload notice. The only bound on the inbound path (Mutiny buffers unconditionally behind it). The publisher runs **PARALLEL** so many `routeIn` flows run at once (feeds the persist batcher below). | ↑ fewer drops/overload notices in bursts, but more retained `Message` graphs (heap/GC). ↓ bounded memory + lower queueing latency, but sheds load and surfaces overload sooner. |
-| Inbound persist (plan B) | `processing.messages.inbound.persist-batch.max-size` | `64` | Max messages coalesced into one `history+outbox` transaction. The single biggest throughput lever — profiling showed the per-message persist round-trip, serialized, was the whole ceiling (load findings R1→R3: ~9× at 200 pairs, p95 ~50× lower). | ↑ fatter transactions, fewer commits/fsync, higher peak throughput; a rolled-back batch retries more rows individually. ↓ smaller batches → more commits, approaches the old 1-tx-per-message cost. |
-| Inbound persist (plan B) | `processing.messages.inbound.persist-batch.linger-ms` | `5` | Max time a partial batch waits before flushing — the only latency this adds to a message. | ↑ lets batches fill more under light load (better amortization) at the cost of that much added send→persist latency. ↓ flushes sooner (lower latency), smaller batches under light load. |
+| Inbound backpressure | `processing.messages.inbound.queue-size` | `3000` | Admission gate on in-flight inbound (client→router) messages; over the cap `publish()` records a drop and emits a `SERVICE_OUT` overload notice. The only bound on the inbound path (Mutiny buffers unconditionally behind it). The publisher runs **PARALLEL** so many `routeIn` flows run at once (feeds the persist batcher below). | ↑ fewer drops/overload notices in bursts, but more retained `Message` graphs (heap/GC).<br>↓ bounded memory + lower queueing latency, but sheds load and surfaces overload sooner. |
+| Inbound persist (plan B) | `processing.messages.inbound.persist-batch.max-size` | `64` | Max messages coalesced into one `history+outbox` transaction. The single biggest throughput lever — profiling showed the per-message persist round-trip, serialized, was the whole ceiling (load findings R1→R3: ~9× at 200 pairs, p95 ~50× lower). | ↑ fatter transactions, fewer commits/fsync, higher peak throughput; a rolled-back batch retries more rows individually.<br>↓ smaller batches → more commits, approaches the old 1-tx-per-message cost. |
+| Inbound persist (plan B) | `processing.messages.inbound.persist-batch.linger-ms` | `5` | Max time a partial batch waits before flushing — the only latency this adds to a message. | ↑ lets batches fill more under light load (better amortization) at the cost of that much added send→persist latency.<br>↓ flushes sooner (lower latency), smaller batches under light load. |
 | Inbound persist (plan B) | `processing.messages.inbound.persist-batch.max-concurrent-batches` | `8` | Batch transactions in flight at once (`merge(N)`). Fills the otherwise ~95%-idle DB pool. | ↑ more parallel persists → higher throughput until the DB or pool saturates. **Keep ≤ the DB pool size (20).** ↓ fewer concurrent transactions, lower DB contention, lower ceiling. |
-| Outbox / outbound | `processing.messages.outbound.batch-size` | `1500` | Max rows claimed per outbox drain (`LIMIT` in the SKIP-LOCKED claim); each row is leased (5s) and emitted one-by-one into the outbound stream. Floored to 50. | ↑ drains backlog in fewer cycles, amortizes the claim cost, but bursts the outbound queue and raises per-poll heap/GC. ↓ slower drain/recovery, gentler bursts. Keep `< queue-size`. |
-| Outbox / outbound | `processing.messages.outbound.queue-size` | `5000` | Hard capacity of the in-memory outbound dispatch queue; over it `publish()` drops. Also gates the poller — it only fetches when the queue is empty. | ↑ tolerates bigger publish bursts before drops, at a larger worst-case heap. ↓ saturates and drops sooner; re-polls sooner. |
-| Outbox / outbound | `processing.messages.outbound.polling-ms` | `1000` | Base outbox poll cadence (`@Scheduled`, SKIP guards re-entry); also the floor the feedback regulator modulates upward. | ↑ less CPU/DB poll traffic, higher redelivery latency. ↓ lower latency + faster drain, but more wake-ups and SKIP-LOCKED queries even when idle. Sets the best-case latency floor. |
-| Adaptive feedback | `processing.messages.feedback.additional-ms` | `1000` | Base added poll delay and the floor the adaptive interval decays back to. | ↑ slower baseline drain (poller never polls faster than this). ↓ tighter stable-state loop, lower latency, more DB polls. |
-| Adaptive feedback | `processing.messages.feedback.adjustment-factor` | `2.0` | Multiplicative back-off (>1) applied to the interval on a drop event. | ↑ steeper back-off — sheds load faster but overshoots/idles the outbox. ↓ gentler — stays fast under load but risks sustained drops. |
-| Adaptive feedback | `processing.messages.feedback.recovery-factor` | `0.5` | Decay multiplier (<1) applied on a stable health event, shrinking the inflated interval toward `additional-ms`. | ↑ (→1) slower, steadier recovery; prolonged latency after a burst. ↓ (→0) snaps back to fast polling, but risks oscillation. |
-| Adaptive feedback | `processing.messages.feedback.max-ms` | `30000` | Hard ceiling on the adaptive added delay. | ↑ harder load-shedding under sustained overload, but worst-case redelivery latency/backlog grows. ↓ bounds tail latency, but keeps hitting the DB. |
-| Delivery retry | `processing.messages.channel.retry` | `true` | Master on/off for per-delivery WS-push retry with backoff in `DeliveryStage`. | ↑ `true` retries transient socket failures up to `max-retries`. ↓ `false` makes the first failure final — lower latency/memory, higher immediate drop-rate. |
-| Delivery retry | `processing.messages.channel.min-backoff-ms` | `300` | Initial backoff before the first retry (base of the jittered exponential). | ↑ gives a flapping client more time to recover, longer in-flight retention/latency. ↓ retries sooner, hammers an unhealthy socket and burns the budget. |
-| Delivery retry | `processing.messages.channel.max-backoff-ms` | `1000` | Ceiling on the growing backoff between retries. | ↑ stretches tail latency to buy a lower drop-rate on slow-recovering sockets. ↓ caps latency, frees resources, but wastes the budget on clients needing more time. |
-| Delivery retry | `processing.messages.channel.max-retries` | `3` | Retry attempts after the initial delivery before the delivery errors out (→ offline/outbox paths). | ↑ lower effective drop-rate, but linearly more in-flight retention, CPU and worst-case latency. ↓ fails fast, frees resources, higher first-failure drop-rate. (With defaults, worst-case added delay ≈ 300+600+1000 ≈ ~1.9s before final failure.) |
-| Outbox GC | `processing.messages.collector.every-s` | `10` | Period of the watermark GC sweep that `DELETE`s outbox rows below the global safe-delete id (SKIP guards overlap). Only ever reclaims already-safe rows. | ↑ table grows between sweeps, bigger per-sweep DELETE/lock/WAL, fewer Redis round-trips. ↓ leaner table/index, cheaper scans, more Redis+DELETE traffic. No latency/drop-rate effect. |
+| Outbox / outbound | `processing.messages.outbound.batch-size` | `1500` | Max rows claimed per outbox drain (`LIMIT` in the SKIP-LOCKED claim); each row is leased (5s) and emitted one-by-one into the outbound stream. Floored to 50. | ↑ drains backlog in fewer cycles, amortizes the claim cost, but bursts the outbound queue and raises per-poll heap/GC.<br>↓ slower drain/recovery, gentler bursts. Keep `< queue-size`. |
+| Outbox / outbound | `processing.messages.outbound.queue-size` | `5000` | Hard capacity of the in-memory outbound dispatch queue; over it `publish()` drops. Also gates the poller — it only fetches when the queue is empty. | ↑ tolerates bigger publish bursts before drops, at a larger worst-case heap.<br>↓ saturates and drops sooner; re-polls sooner. |
+| Outbox / outbound | `processing.messages.outbound.polling-ms` | `1000` | Base outbox poll cadence (`@Scheduled`, SKIP guards re-entry); also the floor the feedback regulator modulates upward. | ↑ less CPU/DB poll traffic, higher redelivery latency.<br>↓ lower latency + faster drain, but more wake-ups and SKIP-LOCKED queries even when idle. Sets the best-case latency floor. |
+| Adaptive feedback | `processing.messages.feedback.additional-ms` | `1000` | Base added poll delay and the floor the adaptive interval decays back to. | ↑ slower baseline drain (poller never polls faster than this).<br>↓ tighter stable-state loop, lower latency, more DB polls. |
+| Adaptive feedback | `processing.messages.feedback.adjustment-factor` | `2.0` | Multiplicative back-off (>1) applied to the interval on a drop event. | ↑ steeper back-off — sheds load faster but overshoots/idles the outbox.<br>↓ gentler — stays fast under load but risks sustained drops. |
+| Adaptive feedback | `processing.messages.feedback.recovery-factor` | `0.5` | Decay multiplier (<1) applied on a stable health event, shrinking the inflated interval toward `additional-ms`. | ↑ (→1) slower, steadier recovery; prolonged latency after a burst.<br>↓ (→0) snaps back to fast polling, but risks oscillation. |
+| Adaptive feedback | `processing.messages.feedback.max-ms` | `30000` | Hard ceiling on the adaptive added delay. | ↑ harder load-shedding under sustained overload, but worst-case redelivery latency/backlog grows.<br>↓ bounds tail latency, but keeps hitting the DB. |
+| Delivery retry | `processing.messages.channel.retry` | `true` | Master on/off for per-delivery WS-push retry with backoff in `DeliveryStage`. | ↑ `true` retries transient socket failures up to `max-retries`.<br>↓ `false` makes the first failure final — lower latency/memory, higher immediate drop-rate. |
+| Delivery retry | `processing.messages.channel.min-backoff-ms` | `300` | Initial backoff before the first retry (base of the jittered exponential). | ↑ gives a flapping client more time to recover, longer in-flight retention/latency.<br>↓ retries sooner, hammers an unhealthy socket and burns the budget. |
+| Delivery retry | `processing.messages.channel.max-backoff-ms` | `1000` | Ceiling on the growing backoff between retries. | ↑ stretches tail latency to buy a lower drop-rate on slow-recovering sockets.<br>↓ caps latency, frees resources, but wastes the budget on clients needing more time. |
+| Delivery retry | `processing.messages.channel.max-retries` | `3` | Retry attempts after the initial delivery before the delivery errors out (→ offline/outbox paths). | ↑ lower effective drop-rate, but linearly more in-flight retention, CPU and worst-case latency.<br>↓ fails fast, frees resources, higher first-failure drop-rate. (With defaults, worst-case added delay ≈ 300+600+1000 ≈ ~1.9s before final failure.) |
+| Outbox GC | `processing.messages.collector.every-s` | `10` | Period of the watermark GC sweep that `DELETE`s outbox rows below the global safe-delete id (SKIP guards overlap). Only ever reclaims already-safe rows. | ↑ table grows between sweeps, bigger per-sweep DELETE/lock/WAL, fewer Redis round-trips.<br>↓ leaner table/index, cheaper scans, more Redis+DELETE traffic. No latency/drop-rate effect. |
 | Outbox GC | `processing.messages.collector.max-watermarks` | `100` | **Inert / reserved** — bound but has no runtime consumer; changing it has no observable effect today. Flag for cleanup (wire it or remove it). | No effect. |
-| Idempotency | `processing.messages.idempotent.ttl-seconds` | `30` | TTL of the Redis dedup key for a delivered message; the window in which a redelivery is recognized as a duplicate and suppressed (ACK retracts it sooner). | ↑ more robust dedup across retries/reconnects, more resident Redis keys. ↓ frees memory, but redeliveries arriving after expiry can double-deliver. Keep above the realistic retry/poll/feedback horizon. |
-| Attachments | `processing.attachments.max-size-bytes` | `26214400` | Hard cap (25 MiB) on a single upload, checked against the client-declared size at `requestUpload` before any row/presigned URL (advisory; skipped if size is null). | ↑ permits larger files — more MinIO storage and bigger presigned GET transfers. ↓ rejects more uploads early; too low blocks legitimate documents. |
-| Attachments | `processing.attachments.orphan-age-seconds` | `3600` | Grace period before the reaper reclaims an unconfirmed `PENDING` attachment (CONFIRMED untouched). Must exceed `minio.upload-ttl-seconds` (600). | ↑ orphaned rows/objects linger, bigger reaper scans. ↓ frees storage sooner, but below the upload window risks reaping in-flight uploads (false reclaim). |
-| Attachments | `processing.attachments.cleanup-every` | `15m` | `@Scheduled` period of the orphan-reclaim job (prod-only, SKIP, BATCH=200/tick). Quarkus duration string. | ↑ slower backlog drain, dead objects persist longer, less DB/MinIO load. ↓ tighter storage, faster drain, more scans/deletes. No live-path latency effect. |
-| Dead-letter | `processing.deadletter.cleanup-every` | `30s` | Period of the dead-letter retract sweep (confirm→delete→clear, SKIP, BATCH=500/tick). Default is the inline annotation literal — the key is absent from `application.yaml`. | ↑ confirmed drafts + Redis confirmed-set linger, less DB/Redis traffic. ↓ fresher audit table, but a full `SMEMBERS` + DELETE every tick. Keep low enough that 500/tick keeps pace with the ACK rate. |
+| Idempotency | `processing.messages.idempotent.ttl-seconds` | `30` | TTL of the Redis dedup key for a delivered message; the window in which a redelivery is recognized as a duplicate and suppressed (ACK retracts it sooner). | ↑ more robust dedup across retries/reconnects, more resident Redis keys.<br>↓ frees memory, but redeliveries arriving after expiry can double-deliver. Keep above the realistic retry/poll/feedback horizon. |
+| Attachments | `processing.attachments.max-size-bytes` | `26214400` | Hard cap (25 MiB) on a single upload, checked against the client-declared size at `requestUpload` before any row/presigned URL (advisory; skipped if size is null). | ↑ permits larger files — more MinIO storage and bigger presigned GET transfers.<br>↓ rejects more uploads early; too low blocks legitimate documents. |
+| Attachments | `processing.attachments.orphan-age-seconds` | `3600` | Grace period before the reaper reclaims an unconfirmed `PENDING` attachment (CONFIRMED untouched). Must exceed `minio.upload-ttl-seconds` (600). | ↑ orphaned rows/objects linger, bigger reaper scans.<br>↓ frees storage sooner, but below the upload window risks reaping in-flight uploads (false reclaim). |
+| Attachments | `processing.attachments.cleanup-every` | `15m` | `@Scheduled` period of the orphan-reclaim job (prod-only, SKIP, BATCH=200/tick). Quarkus duration string. | ↑ slower backlog drain, dead objects persist longer, less DB/MinIO load.<br>↓ tighter storage, faster drain, more scans/deletes. No live-path latency effect. |
+| Dead-letter | `processing.deadletter.cleanup-every` | `30s` | Period of the dead-letter retract sweep (confirm→delete→clear, SKIP, BATCH=500/tick). Default is the inline annotation literal — the key is absent from `application.yaml`. | ↑ confirmed drafts + Redis confirmed-set linger, less DB/Redis traffic.<br>↓ fresher audit table, but a full `SMEMBERS` + DELETE every tick. Keep low enough that 500/tick keeps pace with the ACK rate. |
 
 ### Trade-offs (cross-cutting)
 
@@ -573,20 +583,20 @@ re-delivery**, **single-active-session**, **read receipts over WS** + **push to 
   versioning, MinIO split-horizon public URL. **Must sit behind the Ory edge** (see Deployment).
 
 > **Readiness:** functionally complete for the M-stage core + the four slices above, well-tested
-> (≈298 unit + 29 e2e), but **not yet pre-release** — the OPS/hardening layer, prod deployment behind
+> (≈305 unit + 29 e2e), but **not yet pre-release** — the OPS/hardening layer, prod deployment behind
 > the Ory edge, and a staging run remain.
 
 ---
 
 ## 🗺️ Roadmap & deferred work
 
-- **Per-conversation ordering** — keyed delivery lane + single delivery authority.
-- **Order integration** — Kafka consumer of "master interested in order" → create chat; contract
-  event → freeze (completes the dual-driven model).
-- **Strategy C** — a distinct retry-then-purge pipeline (own retention) for must-arrive notices.
+- **Per-conversation ordering** (FR-MSG-07) — keyed delivery lane + single delivery authority.
+- **OPS hardening** — graceful-shutdown drain, metrics dashboards + alerts, durable dead-letter store
+  + give-up reaper, TLS, WS-resume contract, envelope versioning.
 - **Horizontal sharding** — `CRC32(clientId) mod N` at the gateway + per-instance Outbox filtering
   (designed for; Redis already centralizes shared state).
-- **Attachments** (MinIO two-phase upload), **signaling e2e tests**.
+- **Off-box capacity campaign** — load generator and database on separate hosts, for a true
+  throughput ceiling beyond the single-host floor in [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
 ---
 
@@ -607,8 +617,8 @@ infrastructure/ persistance/postgres (+ inmemory), cache/redis, websocket, rest,
 
 ## 🧩 Appendix A — Tetris ACK/GC model
 
-The safe-delete boundary is computed by merging per-recipient ACK ranges — the **"Tetris"**
-metaphor: each ACK fills a cell, full layers can be cleared.
+The safe-delete boundary comes from merging per-recipient ACK ranges — hence the **"Tetris"**
+metaphor: each ACK fills a cell, and full layers clear.
 
 **Implemented variant — Redis + Lua (v1).** Redis structures:
 

@@ -25,6 +25,11 @@
     redis:
       hosts: redis://${REDIS_HOST:redis}:${REDIS_PORT:6379}
       timeout: 5s
+      # Sized for connection-churn storms: when many WebSocket sessions close at once, each disconnect
+      # fires presence + Tetris-cleanup + idempotency ops at Redis. The Vert.x defaults (pool 6 / wait
+      # queue 24) reject the burst with ConnectionPoolTooBusyException. See docs/PERFORMANCE.md.
+      max-pool-size: 24
+      max-pool-waiting: 2048
 
     hibernate-orm:
       database:
