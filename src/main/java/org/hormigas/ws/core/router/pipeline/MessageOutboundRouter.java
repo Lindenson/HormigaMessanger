@@ -16,6 +16,7 @@ import org.hormigas.ws.core.router.stage.stages.TetrisSentStage;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.domain.message.MessageEnvelope;
 import org.hormigas.ws.domain.message.MessageType;
+import org.hormigas.ws.domain.stage.StageResult;
 
 @Slf4j
 @ApplicationScoped
@@ -40,6 +41,12 @@ public class MessageOutboundRouter implements OutboundRouter<Message> {
         var context = RouterContext.<Message>builder()
                 .pipelineType(pipeline)
                 .payload(message).build();
+        // An outbound message is read from the durable outbox, so it is by definition already
+        // persisted. Without this, DeliveryStage's persist-gate (persisted must be success) skips
+        // every poller (re)delivery — i.e. live redelivery never happens. Double-delivery to an
+        // already-served online recipient is prevented by the idempotency cache (DeliveryStage
+        // canDeliver → isInProgress); offline recipients (never cached) get the live redelivery.
+        context.setPersisted(StageResult.passed());
 
         Uni<RouterContext<Message>> processed = switch (pipeline) {
             case OUTBOUND_CACHED -> deliveryStage.apply(context)

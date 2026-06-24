@@ -211,11 +211,14 @@ So by the time stages run, a `CHAT_IN` is already a `CHAT_OUT` carrying its serv
 1. **Delivery gate vs. non-persistent pipelines.** `DeliveryStage` historically skipped delivery
    unless `persisted` succeeded. `INBOUND_CACHED` (signaling) and `INBOUND_DIRECT` (presence) never
    persist, so they were silently dropped until the gate was made to bypass them. Keep that bypass.
-2. **Outbound poller path still gates on `persisted`.** `routeOut` builds the context **without**
-   setting `persisted` (it stays `UNKNOWN`), so `OUTBOUND_*` delivery is skipped by the same gate →
-   the outbox poller does **not** actually re-push live; offline recipients recover via REST
-   history-sync. Treat enabling it as a deliberate change (mark the outbound context `persisted` —
-   it came from the durable outbox — and expect at-least-once double-delivery handled by client dedup).
+2. **Outbound poller delivery is enabled by marking the outbound context `persisted`.** `routeOut`
+   sets `persisted = PASSED` (the message came from the durable outbox, so it *is* persisted) —
+   otherwise `DeliveryStage`'s gate would skip every poller (re)delivery and the outbox poller would
+   never re-push live. Double-delivery to an already-served **online** recipient is prevented by the
+   idempotency cache (`DeliveryStage.canDeliver → isInProgress`, 30s TTL); an **offline** recipient
+   (never cached) gets the live re-push when it reconnects. Verified by
+   `e2etests/poller-redelivery-check.js` (S1: online → exactly one `CHAT_OUT`; S2: offline→reconnect
+   → poller redelivers live). If you remove that line, live redelivery silently dies again.
 3. **The merge quirk (§7)** — `done` is unreliable for `INBOUND_PERSISTENT`; it's cosmetic today.
 4. **`READ_IN`/`READ_OUT` bypass the router** (handled in `WebsocketService`).
 5. **Stages are CDI beans**; the routers `@Inject` them by constructor. Adding a stage = add the bean
