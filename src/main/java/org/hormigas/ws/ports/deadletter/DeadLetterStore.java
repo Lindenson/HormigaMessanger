@@ -16,4 +16,11 @@ public interface DeadLetterStore<T> {
 
     /** Retract confirmed drafts by messageId; idempotent. Returns the number of rows removed. */
     Uni<Integer> deleteDrafts(List<String> messageIds);
+
+    /**
+     * Whether a dead-letter draft with {@code messageId} is addressed to {@code recipientId}. Used to
+     * authorize a SYSTEM_ACK: only the notice's own recipient may confirm/retract it (ADR-014). Returns
+     * {@code false} on any miss or error (fail-closed — an unverifiable ack must not retract a draft).
+     */
+    Uni<Boolean> isRecipient(String messageId, String recipientId);
 }

@@ -58,6 +58,9 @@ public class WebsocketService {
     @Inject
     org.hormigas.ws.ports.deadletter.DeliveryConfirmations confirmations;
 
+    @Inject
+    org.hormigas.ws.ports.deadletter.DeadLetterStore<Message> deadLetters;
+
 
     private final ChannelFilter<Message, WebSocketConnection> channelFilter = new InboundMessageFilter<>();
 
@@ -111,20 +114,29 @@ public class WebsocketService {
             // enforce membership + blacklist before acceptance (UC-U61, UC-H06). Signaling is between
             // the master and client of a chat exactly like a chat message — only the delivery strategy
             // differs (persistent vs cached), and that is decided downstream by the pipeline resolver.
-            // Trust the authenticated session id as the sender, not the client-supplied field.
             if (message.getType() == MessageType.CHAT_IN || message.getType() == MessageType.SIGNAL_IN) {
                 final String sender = clientSession.getClientId();
-                return conversations.canSend(message.getConversationId(), sender)
-                        .map(check -> {
-                            if (check == ConversationService.SendCheck.ALLOW) {
+                return conversations.evaluateSend(message.getConversationId(), sender)
+                        .map(decision -> {
+                            if (decision.check() == ConversationService.SendCheck.ALLOW) {
+                                // S1 (anti-impersonation): attribution comes from the authenticated
+                                // session and the conversation — NEVER from the client-supplied
+                                // senderId/recipientId. Rewrite both before the message enters the
+                                // pipeline so a participant cannot post as the peer or to a non-member.
+                                Conversation conv = decision.conversation();
+                                String recipient = sender.equals(conv.clientId()) ? conv.masterId() : conv.clientId();
+                                Message authentic = message.toBuilder()
+                                        .senderId(sender)
+                                        .recipientId(recipient)
+                                        .build();
                                 // F3: a message dropped at ingress (queue full) must not be silently
                                 // lost — tell the sender so it can retry.
-                                if (!incomingPublisher.publish(message)) {
-                                    notifyOverloaded(connection, message);
+                                if (!incomingPublisher.publish(authentic)) {
+                                    notifyOverloaded(connection, authentic);
                                 }
                             } else {
                                 log.warn("{} message {} rejected ({}) conv={} sender={}",
-                                        message.getType(), message.getMessageId(), check,
+                                        message.getType(), message.getMessageId(), decision.check(),
                                         message.getConversationId(), sender);
                             }
                             return (Void) null;
@@ -144,8 +156,19 @@ public class WebsocketService {
 
             // System-notice delivery confirmation (Strategy C, ADR-014): record the confirmation so
             // the cleanup sweep retracts the dead_letter DRAFT. correlationId = the notice's messageId.
+            // S2 (ownership): only the notice's own recipient may confirm/retract it — otherwise any
+            // authenticated client could retract another user's must-arrive notice by replaying an id.
             if (message.getType() == MessageType.SYSTEM_ACK) {
-                return confirmations.confirm(message.getCorrelationId());
+                final String confirmer = clientSession.getClientId();
+                final String noticeId = message.getCorrelationId();
+                return deadLetters.isRecipient(noticeId, confirmer)
+                        .flatMap(owned -> {
+                            if (!owned) {
+                                log.warn("SYSTEM_ACK ignored: {} is not the recipient of notice {}", confirmer, noticeId);
+                                return Uni.createFrom().voidItem();
+                            }
+                            return confirmations.confirm(noticeId);
+                        });
             }
 
             if (!incomingPublisher.publish(message)) {

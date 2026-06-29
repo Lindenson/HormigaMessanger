@@ -52,6 +52,20 @@ public class DeadLetterPostgresAdapter implements DeadLetterStore<Message> {
                 .map(SqlResult::rowCount);
     }
 
+    @Override
+    public Uni<Boolean> isRecipient(String messageId, String recipientId) {
+        if (messageId == null || recipientId == null) {
+            return Uni.createFrom().item(false);
+        }
+        return client.preparedQuery("SELECT 1 FROM dead_letter WHERE message_id = $1 AND recipient_id = $2 LIMIT 1")
+                .execute(Tuple.of(messageId, recipientId))
+                .map(rows -> rows.iterator().hasNext())
+                .onFailure().recoverWithItem(e -> {
+                    log.error("Failed dead-letter ownership check for {}: {}", messageId, e.getMessage());
+                    return false;
+                });
+    }
+
     private String serialize(Object value) {
         if (value == null) return null;
         try {

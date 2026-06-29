@@ -97,6 +97,30 @@ class ConversationServiceTest {
         assertEquals(SendCheck.BLOCKED, service(repo).canSend("conv-1", "master-1").await().indefinitely());
     }
 
+    // ── evaluateSend (S1: carries the conversation so the caller can derive the authentic recipient) ──
+
+    @Test
+    void evaluateSend_allow_returns_conversation() {
+        StubRepo repo = new StubRepo(); repo.byId = conv(false, false);
+        var decision = service(repo).evaluateSend("conv-1", "master-1").await().indefinitely();
+        assertEquals(SendCheck.ALLOW, decision.check());
+        assertNotNull(decision.conversation(), "ALLOW must carry the resolved conversation");
+        assertEquals("client-1", decision.conversation().clientId());
+        assertEquals("master-1", decision.conversation().masterId());
+    }
+
+    @Test
+    void evaluateSend_nonAllow_has_null_conversation() {
+        StubRepo repo = new StubRepo(); repo.byId = conv(false, false);
+        assertNull(service(repo).evaluateSend("conv-1", "outsider").await().indefinitely().conversation(),
+                "NOT_MEMBER must not leak a conversation");
+        repo.byId = conv(true, false);
+        assertNull(service(repo).evaluateSend("conv-1", "master-1").await().indefinitely().conversation(),
+                "BLOCKED must not leak a conversation");
+        repo.byId = null;
+        assertNull(service(repo).evaluateSend("conv-1", "master-1").await().indefinitely().conversation());
+    }
+
     /** Configurable in-memory stub. */
     static class StubRepo implements ConversationRepository {
         Conversation pair;       // findByPair result

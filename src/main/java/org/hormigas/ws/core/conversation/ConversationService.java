@@ -81,19 +81,32 @@ public class ConversationService {
      * blocked the other (UC-H07 / FR-MSG-01). Enforced on the WS send path.
      */
     public Uni<SendCheck> canSend(String conversationId, String senderId) {
+        return evaluateSend(conversationId, senderId).map(SendDecision::check);
+    }
+
+    /**
+     * Like {@link #canSend} but also returns the resolved {@link Conversation} when the check is
+     * {@link SendCheck#ALLOW}, so the caller can derive the authentic recipient (the other participant)
+     * instead of trusting a client-supplied {@code recipientId}. The conversation is {@code null} for
+     * any non-ALLOW result.
+     */
+    public Uni<SendDecision> evaluateSend(String conversationId, String senderId) {
         if (conversationId == null || conversationId.isBlank()) {
-            return Uni.createFrom().item(SendCheck.NO_CONVERSATION);
+            return Uni.createFrom().item(new SendDecision(SendCheck.NO_CONVERSATION, null));
         }
         return repository.findById(conversationId).map(c -> {
-            if (c == null) return SendCheck.NO_CONVERSATION;
-            if (!c.hasParticipant(senderId)) return SendCheck.NOT_MEMBER;
-            if (c.isBlocked()) return SendCheck.BLOCKED;
-            return SendCheck.ALLOW;
+            if (c == null) return new SendDecision(SendCheck.NO_CONVERSATION, null);
+            if (!c.hasParticipant(senderId)) return new SendDecision(SendCheck.NOT_MEMBER, null);
+            if (c.isBlocked()) return new SendDecision(SendCheck.BLOCKED, null);
+            return new SendDecision(SendCheck.ALLOW, c);
         });
     }
 
     /** Result of an idempotent create: the chat and whether it was newly created (201 vs 200). */
     public record CreateResult(Conversation conversation, boolean created) {}
+
+    /** A send check plus the resolved conversation (non-null only when {@code check == ALLOW}). */
+    public record SendDecision(SendCheck check, Conversation conversation) {}
 
     public enum Outcome { OK, NOT_FOUND, FORBIDDEN }
 
