@@ -10,7 +10,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.hormigas.ws.domain.conversation.Conversation;
-import org.hormigas.ws.ports.conversation.ConversationRepository;
+import org.hormigas.ws.ports.conversation.ConversationManager;
 
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -20,7 +20,7 @@ import java.util.Map;
 
 @Slf4j
 @ApplicationScoped
-public class ConversationPostgresAdapter implements ConversationRepository {
+public class ConversationPostgresAdapter implements ConversationManager {
 
     private static final String COLS =
             "id, client_id, master_id, metadata_json, client_blocked, master_blocked, created_at, updated_at";

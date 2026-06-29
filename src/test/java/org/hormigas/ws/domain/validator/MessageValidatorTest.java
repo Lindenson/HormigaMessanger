@@ -1,4 +1,4 @@
-package org.hormigas.ws.infrastructure.validator;
+package org.hormigas.ws.domain.validator;
 
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.domain.message.MessageType;

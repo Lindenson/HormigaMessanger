@@ -7,7 +7,7 @@ import java.time.Instant;
 import java.util.List;
 
 /** Driven port for attachment persistence (the PENDING→CONFIRMED→ORPHANED lifecycle). */
-public interface AttachmentRepository {
+public interface AttachmentManager {
 
     Uni<Void> insertPending(Attachment attachment);
 

@@ -2,17 +2,14 @@ package org.hormigas.ws.infrastructure.rest.conversation;
 
 import io.smallrye.mutiny.Uni;
 import jakarta.ws.rs.core.Response;
-import org.hormigas.ws.core.conversation.ConversationService;
-import org.hormigas.ws.core.conversation.ConversationService.CreateResult;
-import org.hormigas.ws.core.conversation.ConversationService.Outcome;
+import org.hormigas.ws.core.conversation.Chats;
+import org.hormigas.ws.domain.conversation.CreateResult;
+import org.hormigas.ws.domain.conversation.Guarded;
+import org.hormigas.ws.domain.conversation.Outcome;
 import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.domain.credentials.ClientData;
-import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.infrastructure.rest.history.security.TokenVerifier;
-import org.hormigas.ws.ports.history.History;
-import org.hormigas.ws.ports.message.MessageModeration;
 import org.hormigas.ws.ports.message.MessageModeration.DeleteOutcome;
-import org.hormigas.ws.ports.message.ReadReceipts;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,19 +20,21 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-@DisplayName("ChatResource — auth gate, membership gate, and per-endpoint status mapping")
-@SuppressWarnings("unchecked")
+/**
+ * ChatResource is a thin adapter: it authenticates and maps the core {@link Guarded} outcome to HTTP.
+ * Membership/authorization is enforced in {@link Chats} (covered by ConversationsTest), so this
+ * test only verifies the auth gate and the per-endpoint status mapping.
+ */
+@DisplayName("ChatResource — auth gate + Guarded→HTTP mapping")
 class ChatResourceTest {
 
-    private final ConversationService conversations = mock(ConversationService.class);
+    private final Chats conversations = mock(Chats.class);
     private final TokenVerifier auth = mock(TokenVerifier.class);
-    private final History<Message> history = mock(History.class);
-    private final MessageModeration moderation = mock(MessageModeration.class);
-    private final ReadReceipts receipts = mock(ReadReceipts.class);
     private ChatResource resource;
 
     private static final ClientData ALICE = new ClientData("A", "Alice", "CLIENT", "a@x");
@@ -47,17 +46,10 @@ class ChatResourceTest {
         resource = new ChatResource();
         resource.conversations = conversations;
         resource.auth = auth;
-        resource.history = history;
-        resource.moderation = moderation;
-        resource.receipts = receipts;
     }
 
     private void authenticated() {
         when(auth.fromHeaders(any(), any(), any(), any())).thenReturn(Optional.of(ALICE));
-    }
-
-    private void unauthenticated() {
-        when(auth.fromHeaders(any(), any(), any(), any())).thenReturn(Optional.empty());
     }
 
     private int status(Uni<Response> u) {
@@ -67,7 +59,7 @@ class ChatResourceTest {
     @Test
     @DisplayName("create without identity → 401")
     void createUnauthorized() {
-        unauthenticated();
+        when(auth.fromHeaders(any(), any(), any(), any())).thenReturn(Optional.empty());
         assertEquals(401, status(resource.create("u", "n", "r", "e",
                 new ChatResource.CreateChatRequest("A", "M", Map.of()))));
     }
@@ -104,23 +96,24 @@ class ChatResourceTest {
     }
 
     @Test
-    @DisplayName("messages: 404 when the chat is missing, 403 for a non-member, 200 for a member")
+    @DisplayName("messages: maps Guarded NOT_FOUND→404, FORBIDDEN→403, OK→200")
     void messagesGating() {
         authenticated();
-        when(conversations.findById("missing")).thenReturn(Uni.createFrom().nullItem());
+        when(conversations.history(eq("missing"), eq("A"), any(), any()))
+                .thenReturn(Uni.createFrom().item(Guarded.notFound()));
         assertEquals(404, status(resource.messages("missing", null, null, "u", "n", "r", "e")));
 
-        Conversation other = new Conversation("c2", "X", "Y", Map.of(), false, false, Instant.now(), Instant.now());
-        when(conversations.findById("c2")).thenReturn(Uni.createFrom().item(other));
+        when(conversations.history(eq("c2"), eq("A"), any(), any()))
+                .thenReturn(Uni.createFrom().item(Guarded.forbidden()));
         assertEquals(403, status(resource.messages("c2", null, null, "u", "n", "r", "e")));
 
-        when(conversations.findById("chat-1")).thenReturn(Uni.createFrom().item(CHAT));
-        when(history.getByConversation(eq("chat-1"), any(), anyInt())).thenReturn(Uni.createFrom().item(List.of()));
+        when(conversations.history(eq("chat-1"), eq("A"), any(), any()))
+                .thenReturn(Uni.createFrom().item(Guarded.ok(List.of())));
         assertEquals(200, status(resource.messages("chat-1", null, null, "u", "n", "r", "e")));
     }
 
     @Test
-    @DisplayName("soft-delete maps the service outcome to 204 / 404 / 403")
+    @DisplayName("soft-delete maps the outcome to 204 / 404 / 403")
     void softDeleteOutcomes() {
         authenticated();
         when(conversations.hide("chat-1", "A")).thenReturn(Uni.createFrom().item(Outcome.OK));
@@ -132,7 +125,7 @@ class ChatResourceTest {
     }
 
     @Test
-    @DisplayName("block / unblock set the blacklist flag and return 204")
+    @DisplayName("block / unblock return 204")
     void blockUnblock() {
         authenticated();
         when(conversations.setBlocked("chat-1", "A", true)).thenReturn(Uni.createFrom().item(Outcome.OK));
@@ -142,47 +135,42 @@ class ChatResourceTest {
     }
 
     @Test
-    @DisplayName("delete message: 409 when frozen, 404 when absent, 204 when deleted")
+    @DisplayName("delete message: OK+FROZEN→409, OK+DELETED→204, guard FORBIDDEN→403")
     void deleteMessageOutcomes() {
         authenticated();
-        when(conversations.findById("chat-1")).thenReturn(Uni.createFrom().item(CHAT));
-        when(moderation.deleteMessage("chat-1", "m1")).thenReturn(Uni.createFrom().item(DeleteOutcome.FROZEN));
+        when(conversations.deleteMessage("chat-1", "A", "m1"))
+                .thenReturn(Uni.createFrom().item(Guarded.ok(DeleteOutcome.FROZEN)));
         assertEquals(409, status(resource.deleteMessage("chat-1", "m1", "u", "n", "r", "e")));
-        when(moderation.deleteMessage("chat-1", "m1")).thenReturn(Uni.createFrom().item(DeleteOutcome.NOT_FOUND));
-        assertEquals(404, status(resource.deleteMessage("chat-1", "m1", "u", "n", "r", "e")));
-        when(moderation.deleteMessage("chat-1", "m1")).thenReturn(Uni.createFrom().item(DeleteOutcome.DELETED));
+        when(conversations.deleteMessage("chat-1", "A", "m1"))
+                .thenReturn(Uni.createFrom().item(Guarded.ok(DeleteOutcome.DELETED)));
         assertEquals(204, status(resource.deleteMessage("chat-1", "m1", "u", "n", "r", "e")));
+        when(conversations.deleteMessage("chat-1", "A", "m1"))
+                .thenReturn(Uni.createFrom().item(Guarded.forbidden()));
+        assertEquals(403, status(resource.deleteMessage("chat-1", "m1", "u", "n", "r", "e")));
     }
 
     @Test
-    @DisplayName("freeze requires an orderId (400) and otherwise freezes that order's messages (200)")
+    @DisplayName("freeze requires an orderId (400), otherwise maps the guarded count to 200")
     void freezeRequiresOrderId() {
         authenticated();
         assertEquals(400, status(resource.freeze("chat-1", "u", "n", "r", "e", new ChatResource.FreezeRequest(" "))));
 
-        when(conversations.findById("chat-1")).thenReturn(Uni.createFrom().item(CHAT));
-        when(moderation.freezeByOrder("chat-1", "order-1")).thenReturn(Uni.createFrom().item(2));
+        when(conversations.freezeByOrder("chat-1", "A", "order-1"))
+                .thenReturn(Uni.createFrom().item(Guarded.ok(2)));
         assertEquals(200, status(resource.freeze("chat-1", "u", "n", "r", "e",
                 new ChatResource.FreezeRequest("order-1"))));
     }
 
     @Test
-    @DisplayName("mark-read and receipts are membership-gated and return 200 for a member")
+    @DisplayName("mark-read and receipts return 200 for a member, 403 for a non-member")
     void readAndReceipts() {
         authenticated();
-        when(conversations.findById("chat-1")).thenReturn(Uni.createFrom().item(CHAT));
-        when(receipts.markRead("chat-1", "A")).thenReturn(Uni.createFrom().item(1));
-        when(receipts.receipts("chat-1")).thenReturn(Uni.createFrom().item(List.of()));
+        when(conversations.markRead("chat-1", "A")).thenReturn(Uni.createFrom().item(Guarded.ok(1)));
+        when(conversations.receipts("chat-1", "A")).thenReturn(Uni.createFrom().item(Guarded.ok(List.of())));
         assertEquals(200, status(resource.markRead("chat-1", "u", "n", "r", "e")));
         assertEquals(200, status(resource.receipts("chat-1", "u", "n", "r", "e")));
-    }
 
-    @Test
-    @DisplayName("read on a chat the caller is not part of → 403")
-    void readForbiddenForNonMember() {
-        authenticated();
-        Conversation other = new Conversation("c2", "X", "Y", Map.of(), false, false, Instant.now(), Instant.now());
-        when(conversations.findById("c2")).thenReturn(Uni.createFrom().item(other));
+        when(conversations.markRead("c2", "A")).thenReturn(Uni.createFrom().item(Guarded.forbidden()));
         assertEquals(403, status(resource.markRead("c2", "u", "n", "r", "e")));
     }
 }

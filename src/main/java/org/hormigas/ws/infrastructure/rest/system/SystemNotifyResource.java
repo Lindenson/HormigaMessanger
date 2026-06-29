@@ -5,7 +5,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import org.hormigas.ws.core.notify.SystemNotifier;
+import org.hormigas.ws.core.notify.Notices;
 import org.hormigas.ws.infrastructure.rest.history.security.TokenVerifier;
 import org.hormigas.ws.infrastructure.security.IdentityHeaders;
 
@@ -13,7 +13,7 @@ import java.util.Map;
 
 /**
  * REST driving adapter for must-arrive system notices (Strategy C, ADR-014) — the dual-driven REST
- * side of {@link SystemNotifier}. Restricted to ADMIN/SERVICE callers (system notices are
+ * side of {@link Notices}. Restricted to ADMIN/SERVICE callers (system notices are
  * server-originated, never client-initiated). Also the manual/ops + e2e trigger for the C path.
  */
 @Path("/api/system/notify")
@@ -22,7 +22,7 @@ import java.util.Map;
 public class SystemNotifyResource {
 
     @Inject
-    SystemNotifier notifier;
+    Notices notifier;
 
     @Inject
     TokenVerifier auth;

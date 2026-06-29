@@ -48,8 +48,8 @@ class MessagePipelineResolverTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"READ_IN", "READ_OUT"})
-    @DisplayName("types handled outside the router (READ_*) have no policy → SKIP")
+    @CsvSource({"READ_OUT"})
+    @DisplayName("an outbound-only / unmapped type (READ_OUT) has no inbound policy → SKIP")
     void unmappedTypeResolvesToSkip(MessageType type) {
         Message msg = Message.builder().type(type).build();
         assertEquals(PipelineType.SKIP, resolver.resolvePipeline(msg));

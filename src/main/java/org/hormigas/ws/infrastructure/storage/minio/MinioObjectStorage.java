@@ -9,6 +9,7 @@ import io.minio.StatObjectArgs;
 import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
 import io.smallrye.mutiny.Uni;
+import org.hormigas.ws.domain.storage.PresignedUrl;
 import io.smallrye.mutiny.infrastructure.Infrastructure;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

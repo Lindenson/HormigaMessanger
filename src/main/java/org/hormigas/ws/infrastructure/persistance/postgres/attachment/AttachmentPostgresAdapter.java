@@ -10,7 +10,7 @@ import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.hormigas.ws.domain.attachment.Attachment;
 import org.hormigas.ws.domain.attachment.Attachment.AttachmentStatus;
-import org.hormigas.ws.ports.attachment.AttachmentRepository;
+import org.hormigas.ws.ports.attachment.AttachmentManager;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -20,7 +20,7 @@ import java.util.List;
 
 @Slf4j
 @ApplicationScoped
-public class AttachmentPostgresAdapter implements AttachmentRepository {
+public class AttachmentPostgresAdapter implements AttachmentManager {
 
     private static final String COLS =
             "id, conversation_id, uploader_id, object_key, file_name, content_type, size_bytes, status, created_at, confirmed_at";

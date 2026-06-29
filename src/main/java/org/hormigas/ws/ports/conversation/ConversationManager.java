@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Driven port for conversation persistence. Implemented by an infrastructure adapter.
  */
-public interface ConversationRepository {
+public interface ConversationManager {
 
     /** The conversation for a participant pair, or {@code null} if none exists. */
     Uni<Conversation> findByPair(String clientId, String masterId);

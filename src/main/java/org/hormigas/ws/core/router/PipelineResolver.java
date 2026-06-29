@@ -10,6 +10,8 @@ public interface PipelineResolver<T, D> {
         OUTBOUND_TRANSIENT,
         ACK_PERSISTENT,
         ACK_CACHED,
+        ACK_SYSTEM,
+        READ,
         SKIP
     }
     PipelineType resolvePipeline(T message);

@@ -7,7 +7,7 @@ import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
-import org.hormigas.ws.core.conversation.ConversationService;
+import org.hormigas.ws.core.conversation.Chats;
 import org.hormigas.ws.ports.message.MessageModeration;
 
 import java.util.Map;
@@ -20,7 +20,7 @@ import java.util.Map;
  *
  * <p>Consumes topic {@code order.events} (channel {@code order-events-in}) and maps two event types:
  * <ul>
- *   <li><b>UC-H01</b> — "a master expressed interest in an order" → {@link ConversationService#createChat}
+ *   <li><b>UC-H01</b> — "a master expressed interest in an order" → {@link Chats#createChat}
  *       for the {@code (clientId, masterId)} pair, idempotent, orderId carried as metadata.</li>
  *   <li><b>UC-H04</b> — "a contract was reached" → resolve the chat by pair, then
  *       {@link MessageModeration#freezeByOrder} (message-level freeze scoped by orderId).</li>
@@ -39,7 +39,7 @@ public class OrderEventConsumer {
     static final String FIELD_MASTER_ID = "masterId";
 
     @Inject
-    ConversationService conversations;
+    Chats conversations;
 
     @Inject
     MessageModeration moderation;

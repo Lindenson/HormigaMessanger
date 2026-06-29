@@ -5,8 +5,8 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import org.hormigas.ws.core.attachment.AttachmentService;
-import org.hormigas.ws.core.attachment.AttachmentService.ConfirmResult;
+import org.hormigas.ws.core.attachment.Uploads;
+import org.hormigas.ws.domain.attachment.ConfirmResult;
 import org.hormigas.ws.infrastructure.rest.history.security.TokenVerifier;
 import org.hormigas.ws.infrastructure.security.IdentityHeaders;
 import org.hormigas.ws.infrastructure.websocket.inbound.InboundPublisher;
@@ -25,7 +25,7 @@ import java.util.Map;
 public class AttachmentResource {
 
     @Inject
-    AttachmentService attachments;
+    Uploads attachments;
 
     @Inject
     TokenVerifier auth;

@@ -39,6 +39,10 @@ public class MessagePipelineResolver implements PipelineResolver<Message, Messag
         // ACK
         routingMatrix.put(SIGNAL_ACK, ACK_CACHED);
         routingMatrix.put(CHAT_ACK, ACK_PERSISTENT);
+        // READ receipt (UC-U14) — mark read + push READ_OUT to the peer
+        routingMatrix.put(READ_IN, READ);
+        // System-notice delivery confirmation (Strategy C, ADR-014) — ownership-checked retract
+        routingMatrix.put(SYSTEM_ACK, ACK_SYSTEM);
         // PRESENCE
         routingMatrix.put(PRESENT_INIT, INBOUND_DIRECT);
         routingMatrix.put(PRESENT_JOIN, INBOUND_DIRECT);

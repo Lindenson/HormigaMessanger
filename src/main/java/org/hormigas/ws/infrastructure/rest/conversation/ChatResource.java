@@ -5,21 +5,19 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import org.hormigas.ws.core.conversation.ConversationService;
-import org.hormigas.ws.domain.credentials.ClientData;
-import org.hormigas.ws.domain.message.Message;
+import org.hormigas.ws.core.conversation.Chats;
+import org.hormigas.ws.domain.conversation.Guarded;
+import org.hormigas.ws.domain.conversation.Outcome;
 import org.hormigas.ws.infrastructure.rest.history.security.TokenVerifier;
 import org.hormigas.ws.infrastructure.security.IdentityHeaders;
-import org.hormigas.ws.ports.history.History;
-import org.hormigas.ws.ports.message.MessageModeration;
-import org.hormigas.ws.ports.message.ReadReceipts;
 
-import java.util.List;
 import java.util.Map;
 
 /**
- * REST adapter (one of the inbound adapters over the universal create-chat use case; the other is
- * the Order-event consumer — M-4). All endpoints require Ory identity headers.
+ * REST adapter over the conversation use cases. Every endpoint is thin: it authenticates the Ory
+ * identity headers, delegates to the {@link Chats} core use case, and renders the domain
+ * result to HTTP. Membership/authorization and all business logic live in {@code core} (the
+ * {@code guardedRead} guard), never here — this resource only adapts HTTP to the use cases and back.
  */
 @Path("/api/chats")
 @Produces(MediaType.APPLICATION_JSON)
@@ -27,19 +25,10 @@ import java.util.Map;
 public class ChatResource {
 
     @Inject
-    ConversationService conversations;
+    Chats conversations;
 
     @Inject
     TokenVerifier auth;
-
-    @Inject
-    History<Message> history;
-
-    @Inject
-    MessageModeration moderation;
-
-    @Inject
-    ReadReceipts receipts;
 
     public record CreateChatRequest(String clientId, String masterId, Map<String, String> metadata) {}
 
@@ -81,11 +70,6 @@ public class ChatResource {
                 .map(list -> Response.ok(list).build());
     }
 
-    /** Default page size for history sync when the caller doesn't specify one. */
-    static final int DEFAULT_HISTORY_LIMIT = 200;
-    /** Hard cap so a caller can't request an unbounded page. */
-    static final int MAX_HISTORY_LIMIT = 500;
-
     @GET
     @Path("/{chatId}/messages")
     public Uni<Response> messages(
@@ -101,21 +85,9 @@ public class ChatResource {
         if (caller.isEmpty()) {
             return unauthorized();
         }
-        ClientData me = caller.get();
-        int pageSize = limit == null ? DEFAULT_HISTORY_LIMIT : Math.min(Math.max(1, limit), MAX_HISTORY_LIMIT);
-        return conversations.findById(chatId)
-                .flatMap(conv -> {
-                    if (conv == null) {
-                        return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
-                    }
-                    if (!conv.hasParticipant(me.id())) {
-                        return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
-                    }
-                    // Conversation-scoped, cursor-paginated history sync (UC-U50 / reconnect durability):
-                    // ?since=<last messageId> (exclusive) &limit=<n>. Defaults: from start, DEFAULT_HISTORY_LIMIT.
-                    return history.getByConversation(chatId, since, pageSize)
-                            .map(messages -> Response.ok(messages).build());
-                });
+        // Conversation-scoped, cursor-paginated history sync (UC-U50). Guard + clamping live in core.
+        return conversations.history(chatId, caller.get().id(), since, limit)
+                .map(this::guardedToResponse);
     }
 
     @DELETE
@@ -168,16 +140,16 @@ public class ChatResource {
             @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
         var caller = auth.fromHeaders(userId, userName, role, email);
         if (caller.isEmpty()) return unauthorized();
-        String meId = caller.get().id();
-        return conversations.findById(chatId).flatMap(conv -> {
-            if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
-            if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
-            return moderation.deleteMessage(chatId, messageId).map(outcome -> switch (outcome) {
-                case DELETED -> Response.noContent().build();
-                case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();
-                case FROZEN -> Response.status(Response.Status.CONFLICT).build(); // 409: frozen, immutable
-            });
-        });
+        return conversations.deleteMessage(chatId, caller.get().id(), messageId)
+                .map(g -> switch (g.outcome()) {
+                    case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();
+                    case FORBIDDEN -> Response.status(Response.Status.FORBIDDEN).build();
+                    case OK -> switch (g.value()) {
+                        case DELETED -> Response.noContent().build();
+                        case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();
+                        case FROZEN -> Response.status(Response.Status.CONFLICT).build(); // 409: frozen, immutable
+                    };
+                });
     }
 
     @POST
@@ -195,13 +167,12 @@ public class ChatResource {
         if (req == null || req.orderId() == null || req.orderId().isBlank()) {
             return Uni.createFrom().item(Response.status(Response.Status.BAD_REQUEST).build());
         }
-        String meId = caller.get().id();
-        return conversations.findById(chatId).flatMap(conv -> {
-            if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
-            if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
-            return moderation.freezeByOrder(chatId, req.orderId())
-                    .map(n -> Response.ok(Map.of("frozen", n)).build());
-        });
+        return conversations.freezeByOrder(chatId, caller.get().id(), req.orderId())
+                .map(g -> switch (g.outcome()) {
+                    case OK -> Response.ok(Map.of("frozen", g.value())).build();
+                    case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();
+                    case FORBIDDEN -> Response.status(Response.Status.FORBIDDEN).build();
+                });
     }
 
     @POST
@@ -214,14 +185,13 @@ public class ChatResource {
             @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
         var caller = auth.fromHeaders(userId, userName, role, email);
         if (caller.isEmpty()) return unauthorized();
-        String meId = caller.get().id();
-        return conversations.findById(chatId).flatMap(conv -> {
-            if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
-            if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
-            // the caller acknowledges the messages addressed to them (UC-U14)
-            return receipts.markRead(chatId, meId)
-                    .map(n -> Response.ok(Map.of("read", n)).build());
-        });
+        // REST fallback for the READ_IN WebSocket event (UC-U14); the caller acks messages addressed to them.
+        return conversations.markRead(chatId, caller.get().id())
+                .map(g -> switch (g.outcome()) {
+                    case OK -> Response.ok(Map.of("read", g.value())).build();
+                    case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();
+                    case FORBIDDEN -> Response.status(Response.Status.FORBIDDEN).build();
+                });
     }
 
     @GET
@@ -234,15 +204,19 @@ public class ChatResource {
             @HeaderParam(IdentityHeaders.USER_EMAIL) String email) {
         var caller = auth.fromHeaders(userId, userName, role, email);
         if (caller.isEmpty()) return unauthorized();
-        String meId = caller.get().id();
-        return conversations.findById(chatId).flatMap(conv -> {
-            if (conv == null) return Uni.createFrom().item(Response.status(Response.Status.NOT_FOUND).build());
-            if (!conv.hasParticipant(meId)) return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
-            return receipts.receipts(chatId).map(list -> Response.ok(list).build());
-        });
+        return conversations.receipts(chatId, caller.get().id()).map(this::guardedToResponse);
     }
 
-    private Response toResponse(ConversationService.Outcome outcome) {
+    /** Render a membership-guarded read result to HTTP: OK→200 body, NOT_FOUND→404, FORBIDDEN→403. */
+    private <T> Response guardedToResponse(Guarded<T> g) {
+        return switch (g.outcome()) {
+            case OK -> Response.ok(g.value()).build();
+            case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();
+            case FORBIDDEN -> Response.status(Response.Status.FORBIDDEN).build();
+        };
+    }
+
+    private Response toResponse(Outcome outcome) {
         return switch (outcome) {
             case OK -> Response.noContent().build();
             case NOT_FOUND -> Response.status(Response.Status.NOT_FOUND).build();

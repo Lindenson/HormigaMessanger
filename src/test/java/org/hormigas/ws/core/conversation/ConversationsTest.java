@@ -1,12 +1,12 @@
 package org.hormigas.ws.core.conversation;
 
 import io.smallrye.mutiny.Uni;
-import org.hormigas.ws.core.conversation.ConversationService.CreateResult;
-import org.hormigas.ws.core.conversation.ConversationService.Outcome;
-import org.hormigas.ws.core.conversation.ConversationService.SendCheck;
+import org.hormigas.ws.domain.conversation.CreateResult;
+import org.hormigas.ws.domain.conversation.Outcome;
+import org.hormigas.ws.domain.conversation.SendCheck;
 import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.domain.generator.IdGenerator;
-import org.hormigas.ws.ports.conversation.ConversationRepository;
+import org.hormigas.ws.ports.conversation.ConversationManager;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * Unit tests for the chat use case (no infra). Verifies FR-CHAT-02 (idempotent create),
  * membership/authz outcomes, and the send-guard (UC-H07 / FR-MSG-01).
  */
-class ConversationServiceTest {
+class ConversationsTest {
 
     private static Conversation conv(boolean clientBlocked, boolean masterBlocked) {
         Instant now = Instant.now();
@@ -27,8 +27,8 @@ class ConversationServiceTest {
                 clientBlocked, masterBlocked, now, now);
     }
 
-    private ConversationService service(StubRepo repo) {
-        ConversationService s = new ConversationService();
+    private Conversations service(StubRepo repo) {
+        Conversations s = new Conversations();
         s.repository = repo;
         s.idGenerator = () -> "gen-1";
         return s;
@@ -122,7 +122,7 @@ class ConversationServiceTest {
     }
 
     /** Configurable in-memory stub. */
-    static class StubRepo implements ConversationRepository {
+    static class StubRepo implements ConversationManager {
         Conversation pair;       // findByPair result
         Conversation byId;       // findById result
         Conversation inserted;   // captured insert

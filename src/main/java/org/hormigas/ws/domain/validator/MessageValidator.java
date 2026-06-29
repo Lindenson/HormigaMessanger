@@ -1,10 +1,8 @@
-package org.hormigas.ws.infrastructure.validator;
+package org.hormigas.ws.domain.validator;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.domain.message.MessageType;
-import org.hormigas.ws.domain.validator.ValidationResult;
-import org.hormigas.ws.domain.validator.Validator;
 
 import java.time.Instant;
 import java.time.ZoneId;

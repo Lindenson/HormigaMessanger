@@ -8,8 +8,8 @@ import io.smallrye.reactive.messaging.memory.InMemoryConnector;
 import io.smallrye.reactive.messaging.memory.InMemorySource;
 import jakarta.enterprise.inject.Any;
 import jakarta.inject.Inject;
-import org.hormigas.ws.core.conversation.ConversationService;
-import org.hormigas.ws.core.conversation.ConversationService.CreateResult;
+import org.hormigas.ws.core.conversation.Chats;
+import org.hormigas.ws.domain.conversation.CreateResult;
 import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.ports.message.MessageModeration;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,7 +40,7 @@ class OrderEventConsumerTest {
     ObjectMapper mapper;
 
     @InjectMock
-    ConversationService conversations;
+    Chats conversations;
 
     @InjectMock
     MessageModeration moderation;

@@ -24,7 +24,8 @@ public class InboundPrototype {
                         .messageId(idGenerator.generateId())
                         .ackId(message.getAckId())
                         .type(switchMesssageType(message))
-                        .correlationId(message.getType() == CHAT_ACK? message.getCorrelationId(): message.getMessageId() )
+                        .correlationId(message.getType() == CHAT_ACK || message.getType() == SYSTEM_ACK
+                                ? message.getCorrelationId() : message.getMessageId())
                         .serverTimestamp(System.currentTimeMillis())
                         .build())
                 .build();

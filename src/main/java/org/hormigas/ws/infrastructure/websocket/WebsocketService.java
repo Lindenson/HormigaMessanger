@@ -7,7 +7,6 @@ import io.vertx.core.http.HttpClosedException;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import org.hormigas.ws.core.conversation.ConversationService;
 import org.hormigas.ws.core.credits.ChannelFilter;
 import org.hormigas.ws.core.credits.filter.InboundMessageFilter;
 import org.hormigas.ws.domain.message.Message;
@@ -15,14 +14,19 @@ import org.hormigas.ws.domain.message.MessageType;
 import org.hormigas.ws.domain.session.ClientSession;
 import org.hormigas.ws.domain.validator.ValidationResult;
 import org.hormigas.ws.domain.validator.Validator;
-import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.infrastructure.websocket.inbound.InboundPublisher;
 import org.hormigas.ws.infrastructure.websocket.utils.WebSocketUtils;
-import org.hormigas.ws.ports.channel.DeliveryChannel;
-import org.hormigas.ws.ports.message.ReadReceipts;
 import org.hormigas.ws.ports.notifier.Coordinator;
 import org.hormigas.ws.ports.session.SessionRegistry;
 
+/**
+ * Pure transport adapter for the WebSocket channel. It does only adapter-level work: deserialize the
+ * frame, stamp the authenticated sender from the session (transport-auth translation — never trust the
+ * client's {@code senderId}), apply the synchronous credit filter, validate, and publish into the
+ * inbound pipeline. All routing and use cases (membership/recipient resolution, read receipts,
+ * system-ack confirmation) live downstream in the pipeline stages, keyed by {@code MessageType} — this
+ * class holds NO business logic and reaches the core only through the {@link InboundPublisher}.
+ */
 @Slf4j
 @WebSocket(path = "/ws")
 @ApplicationScoped
@@ -46,24 +50,7 @@ public class WebsocketService {
     @Inject
     Coordinator<WebSocketConnection> coordinator;
 
-    @Inject
-    ConversationService conversations;
-
-    @Inject
-    ReadReceipts receipts;
-
-    @Inject
-    DeliveryChannel<Message> deliveryChannel;
-
-    @Inject
-    org.hormigas.ws.ports.deadletter.DeliveryConfirmations confirmations;
-
-    @Inject
-    org.hormigas.ws.ports.deadletter.DeadLetterStore<Message> deadLetters;
-
-
     private final ChannelFilter<Message, WebSocketConnection> channelFilter = new InboundMessageFilter<>();
-
 
     @OnOpen
     public void onOpen(WebSocketConnection connection) {
@@ -88,7 +75,6 @@ public class WebsocketService {
         coordinator.active(connection);
     }
 
-
     @OnTextMessage
     public Uni<Void> onMessage(String rawJson, WebSocketConnection connection) {
         log.debug("Receiving message {}", rawJson);
@@ -98,7 +84,12 @@ public class WebsocketService {
                 log.warn("Received message from unregistered connection: {}", connection.id());
                 return Uni.createFrom().voidItem();
             }
-            Message message = objectMapper.readValue(rawJson, Message.class);
+            // Stamp the authenticated sender from the session — the client-supplied senderId is never
+            // trusted (anti-impersonation, S1). Recipient resolution + membership/block checks happen
+            // downstream in the pipeline (AuthorizationStage), keyed by MessageType.
+            Message message = objectMapper.readValue(rawJson, Message.class)
+                    .toBuilder().senderId(clientSession.getClientId()).build();
+
             if (!channelFilter.filter(message, clientSession)) {
                 log.warn("Message (id={}): {} filtered out", message.getMessageId(), message);
                 return Uni.createFrom().voidItem();
@@ -110,67 +101,7 @@ public class WebsocketService {
             }
             coordinator.active(connection);
 
-            // Authenticated writes into a conversation (persistent chat AND real-time signaling) must
-            // enforce membership + blacklist before acceptance (UC-U61, UC-H06). Signaling is between
-            // the master and client of a chat exactly like a chat message — only the delivery strategy
-            // differs (persistent vs cached), and that is decided downstream by the pipeline resolver.
-            if (message.getType() == MessageType.CHAT_IN || message.getType() == MessageType.SIGNAL_IN) {
-                final String sender = clientSession.getClientId();
-                return conversations.evaluateSend(message.getConversationId(), sender)
-                        .map(decision -> {
-                            if (decision.check() == ConversationService.SendCheck.ALLOW) {
-                                // S1 (anti-impersonation): attribution comes from the authenticated
-                                // session and the conversation — NEVER from the client-supplied
-                                // senderId/recipientId. Rewrite both before the message enters the
-                                // pipeline so a participant cannot post as the peer or to a non-member.
-                                Conversation conv = decision.conversation();
-                                String recipient = sender.equals(conv.clientId()) ? conv.masterId() : conv.clientId();
-                                Message authentic = message.toBuilder()
-                                        .senderId(sender)
-                                        .recipientId(recipient)
-                                        .build();
-                                // F3: a message dropped at ingress (queue full) must not be silently
-                                // lost — tell the sender so it can retry.
-                                if (!incomingPublisher.publish(authentic)) {
-                                    notifyOverloaded(connection, authentic);
-                                }
-                            } else {
-                                log.warn("{} message {} rejected ({}) conv={} sender={}",
-                                        message.getType(), message.getMessageId(), decision.check(),
-                                        message.getConversationId(), sender);
-                            }
-                            return (Void) null;
-                        })
-                        .onFailure().recoverWithItem(err -> {
-                            log.error("Conversation guard failed for message {}: {}",
-                                    message.getMessageId(), err.getMessage());
-                            return null;
-                        });
-            }
-
-            // Read receipt over WS (UC-U14): mark the reader's received messages READ, then push a
-            // READ_OUT to the peer (the original sender) — fire-and-forget. REST /read is the fallback.
-            if (message.getType() == MessageType.READ_IN) {
-                return markReadAndNotify(message.getConversationId(), clientSession.getClientId());
-            }
-
-            // System-notice delivery confirmation (Strategy C, ADR-014): record the confirmation so
-            // the cleanup sweep retracts the dead_letter DRAFT. correlationId = the notice's messageId.
-            // S2 (ownership): only the notice's own recipient may confirm/retract it — otherwise any
-            // authenticated client could retract another user's must-arrive notice by replaying an id.
-            if (message.getType() == MessageType.SYSTEM_ACK) {
-                final String confirmer = clientSession.getClientId();
-                final String noticeId = message.getCorrelationId();
-                return deadLetters.isRecipient(noticeId, confirmer)
-                        .flatMap(owned -> {
-                            if (!owned) {
-                                log.warn("SYSTEM_ACK ignored: {} is not the recipient of notice {}", confirmer, noticeId);
-                                return Uni.createFrom().voidItem();
-                            }
-                            return confirmations.confirm(noticeId);
-                        });
-            }
-
+            // F3: a message dropped at ingress (queue full) must not be silently lost — tell the sender.
             if (!incomingPublisher.publish(message)) {
                 notifyOverloaded(connection, message);
             }
@@ -195,37 +126,6 @@ public class WebsocketService {
                 connection.sendText(json).subscribe().with(
                         x -> {},
                         e -> log.debug("Failed to send overload notice: {}", e.getMessage())));
-    }
-
-    private Uni<Void> markReadAndNotify(String conversationId, String reader) {
-        return conversations.findById(conversationId)
-                .flatMap(conv -> {
-                    if (conv == null || !conv.hasParticipant(reader)) {
-                        log.warn("READ_IN ignored: conv={} reader={} (missing/not a member)", conversationId, reader);
-                        return Uni.createFrom().voidItem();
-                    }
-                    return receipts.markRead(conversationId, reader)
-                            .flatMap(marked -> marked > 0
-                                    ? deliveryChannel.deliver(readReceiptFor(conv, reader)).replaceWithVoid()
-                                    : Uni.createFrom().voidItem());
-                })
-                .onFailure().recoverWithItem(() -> {
-                    log.error("READ_IN handling failed for conv={} reader={}", conversationId, reader);
-                    return null;
-                });
-    }
-
-    /** READ_OUT pushed to the peer (the participant who is not the reader). */
-    private Message readReceiptFor(Conversation conv, String reader) {
-        String peer = reader.equals(conv.clientId()) ? conv.masterId() : conv.clientId();
-        return Message.builder()
-                .type(MessageType.READ_OUT)
-                .conversationId(conv.id())
-                .senderId(reader)        // who read
-                .recipientId(peer)       // notified party (original sender)
-                .messageId("read-" + conv.id() + "-" + reader)
-                .serverTimestamp(System.currentTimeMillis())
-                .build();
     }
 
     @OnError

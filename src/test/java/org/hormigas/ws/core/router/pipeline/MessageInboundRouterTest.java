@@ -22,6 +22,7 @@ import static org.mockito.Mockito.*;
 class MessageInboundRouterTest {
 
     private final PipelineResolver<Message, MessageType> resolver = mock(PipelineResolver.class);
+    private final AuthorizationStage authorization = mock(AuthorizationStage.class);
     private final OutboxStage outbox = mock(OutboxStage.class);
     private final DeliveryStage delivery = mock(DeliveryStage.class);
     private final AckStage ack = mock(AckStage.class);
@@ -31,9 +32,12 @@ class MessageInboundRouterTest {
     private final InboundPrototype prototype = mock(InboundPrototype.class);
     private final TetrisSentStage tetrisSent = mock(TetrisSentStage.class);
     private final TetrisAckStage tetrisAck = mock(TetrisAckStage.class);
+    private final ReadStage read = mock(ReadStage.class);
+    private final SystemAckStage systemAck = mock(SystemAckStage.class);
 
     private final MessageInboundRouter router = new MessageInboundRouter(
-            resolver, outbox, delivery, ack, cleanCache, cache, finalStage, prototype, tetrisSent, tetrisAck);
+            resolver, authorization, outbox, delivery, ack, cleanCache, cache, finalStage, prototype,
+            tetrisSent, tetrisAck, read, systemAck);
 
     private final Message msg = Message.builder().type(MessageType.CHAT_IN).messageId("m1").build();
 
@@ -44,6 +48,7 @@ class MessageInboundRouterTest {
 
     @BeforeEach
     void passThrough() {
+        when(authorization.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
         when(outbox.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
         when(delivery.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
         when(ack.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
@@ -51,6 +56,8 @@ class MessageInboundRouterTest {
         when(cache.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
         when(tetrisSent.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
         when(tetrisAck.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
+        when(read.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
+        when(systemAck.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
         when(finalStage.apply(any())).thenAnswer(MessageInboundRouterTest::echo);
     }
 
@@ -61,10 +68,11 @@ class MessageInboundRouterTest {
     }
 
     @Test
-    @DisplayName("INBOUND_PERSISTENT persists, delivers, then runs ack+cache+tetris-sent and finalizes")
+    @DisplayName("INBOUND_PERSISTENT authorizes, persists, delivers, then runs ack+cache+tetris-sent and finalizes")
     void inboundPersistent() {
         resolveAs(PipelineType.INBOUND_PERSISTENT);
         router.routeIn(msg).await().indefinitely();
+        verify(authorization).apply(any());
         verify(outbox).apply(any());
         verify(delivery).apply(any());
         verify(ack).apply(any());
@@ -74,10 +82,25 @@ class MessageInboundRouterTest {
     }
 
     @Test
-    @DisplayName("INBOUND_CACHED delivers then caches (no outbox persistence)")
+    @DisplayName("a rejected authorization short-circuits — no persistence or delivery")
+    void authorizationRejects() {
+        resolveAs(PipelineType.INBOUND_PERSISTENT);
+        when(authorization.apply(any())).thenAnswer(i -> {
+            RouterContext<Message> c = i.getArgument(0);
+            return Uni.createFrom().item(c.withError(new SecurityException("rejected")));
+        });
+        router.routeIn(msg).await().indefinitely();
+        verify(outbox, never()).apply(any());
+        verify(delivery, never()).apply(any());
+        verify(finalStage).apply(any());
+    }
+
+    @Test
+    @DisplayName("INBOUND_CACHED authorizes, delivers, then caches (no outbox persistence)")
     void inboundCached() {
         resolveAs(PipelineType.INBOUND_CACHED);
         router.routeIn(msg).await().indefinitely();
+        verify(authorization).apply(any());
         verify(delivery).apply(any());
         verify(cache).apply(any());
         verify(outbox, never()).apply(any());
@@ -110,6 +133,25 @@ class MessageInboundRouterTest {
         router.routeIn(msg).await().indefinitely();
         verify(cleanCache).apply(any());
         verify(tetrisAck, never()).apply(any());
+    }
+
+    @Test
+    @DisplayName("READ runs the read stage then finalizes")
+    void read() {
+        resolveAs(PipelineType.READ);
+        router.routeIn(msg).await().indefinitely();
+        verify(read).apply(any());
+        verify(outbox, never()).apply(any());
+        verify(delivery, never()).apply(any());
+    }
+
+    @Test
+    @DisplayName("ACK_SYSTEM runs the system-ack stage then finalizes")
+    void ackSystem() {
+        resolveAs(PipelineType.ACK_SYSTEM);
+        router.routeIn(msg).await().indefinitely();
+        verify(systemAck).apply(any());
+        verify(outbox, never()).apply(any());
     }
 
     @Test

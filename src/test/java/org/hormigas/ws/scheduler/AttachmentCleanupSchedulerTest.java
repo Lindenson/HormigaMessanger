@@ -3,7 +3,7 @@ package org.hormigas.ws.scheduler;
 import io.smallrye.mutiny.Uni;
 import org.hormigas.ws.domain.attachment.Attachment;
 import org.hormigas.ws.domain.attachment.Attachment.AttachmentStatus;
-import org.hormigas.ws.ports.attachment.AttachmentRepository;
+import org.hormigas.ws.ports.attachment.AttachmentManager;
 import org.hormigas.ws.ports.storage.ObjectStorage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,7 +18,7 @@ import static org.mockito.Mockito.*;
 @DisplayName("AttachmentCleanupScheduler — reclaims stale PENDING uploads (ADR-010 cleanup)")
 class AttachmentCleanupSchedulerTest {
 
-    private final AttachmentRepository repo = mock(AttachmentRepository.class);
+    private final AttachmentManager repo = mock(AttachmentManager.class);
     private final ObjectStorage storage = mock(ObjectStorage.class);
 
     private AttachmentCleanupScheduler scheduler() {

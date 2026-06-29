@@ -19,7 +19,7 @@ import java.util.Map;
  * retracts the draft.
  */
 @ApplicationScoped
-public class SystemNotifier {
+public class SystemNotifier implements Notices {
 
     @Inject
     OutboxManager<Message> outbox;

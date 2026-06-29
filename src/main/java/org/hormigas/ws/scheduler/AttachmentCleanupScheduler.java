@@ -8,7 +8,7 @@ import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.hormigas.ws.domain.attachment.Attachment;
-import org.hormigas.ws.ports.attachment.AttachmentRepository;
+import org.hormigas.ws.ports.attachment.AttachmentManager;
 import org.hormigas.ws.ports.storage.ObjectStorage;
 
 import java.time.Duration;
@@ -29,7 +29,7 @@ public class AttachmentCleanupScheduler {
     private static final int BATCH = 200;
 
     @Inject
-    AttachmentRepository attachments;
+    AttachmentManager attachments;
 
     @Inject
     ObjectStorage storage;
