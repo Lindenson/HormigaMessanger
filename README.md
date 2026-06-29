@@ -432,13 +432,26 @@ WebSocket max message size is 64 KiB.
 
 ## 🚀 Performance
 
-**~3,000 messages/second, sustained, at a 20 ms p95** — held flat for minutes at 600 live WebSocket
-clients, with no message loss, no full GC and a memory footprint that settles and stays put. Well past
-the ≥ 1,000 msg/s target.
+**1,000 concurrent clients holding real conversations is a fraction of capacity.** A 5-minute soak
+with **1,000 live WebSocket sessions** (500 chat pairs) — taking turns with human think-time, marking
+messages read, and 30 % of them dropping & reconnecting mid-chat — ran at **p95 13 ms, zero server
+drops, zero full GC**, with heap flat ~88 MB and RSS settled ~0.72 GB under a bounded JVM.
 
 ```mermaid
 xychart-beta
-    title "Sustained throughput (messages / second)"
+    title "Send→SENT latency at 1,000 concurrent clients (ms)"
+    x-axis ["mean", "p75", "p95", "p99", "max"]
+    y-axis "ms" 0 --> 100
+    bar [4, 8, 13, 19, 91]
+```
+
+And the **peak capacity** (synthetic stress test, think-time removed) is **~3,000 messages/second,
+sustained, at a 20 ms p95** — held flat for minutes with no message loss and no full GC. Well past the
+≥ 1,000 msg/s target.
+
+```mermaid
+xychart-beta
+    title "Peak throughput — stress test (messages / second)"
     x-axis ["50 pairs", "100 pairs", "200 pairs", "300 pairs"]
     y-axis "msg/s" 0 --> 3200
     bar [520, 1040, 2040, 3000]
