@@ -98,17 +98,42 @@ backpressure-handling bug, not a resource limit). The fix drains the group throu
 sheds whole batches — each message completed `FAILED` so its sender gets an `overloaded` notice and
 retries (never a silent loss).
 
-After the fix, the same brutal run is a non-event — the pipeline **sustained ~3,000 msg/s from 30
-connections** and shed almost nothing:
+After the fix, the same brutal regime is a non-event. We then ran the **full planned 10-minute stress**
+— **1,200 online**, ~30 rotating fire-hose senders messaging random peers, in **three waves
+(50 % → 100 % → 75 %)** — and the server tracked the waves exactly while shedding *nothing*:
 
-| Signal (limiter off, 30 fire-hose senders) | Before fix | After fix |
-|---------------------------------------------|-----------|-----------|
-| Persisted (6-min run) | froze at **341,501** | **792,952** |
-| Peak-wave throughput | **0** (stalled) | **~3,000 msg/s** |
+```
+msg/s 3000 ┤            ╭──────────────╮
+      2500 ┤            │   (100%)     ╰──────────────╮
+      2000 ┤            │                  (75%)      │
+      1500 ┤────────────╯                             │
+      1000 ┤  (50%)                                   │
+           └──┴────┴────┴────┴────┴────┴────┴────┴────┴
+             0   100  200  300  400  500     seconds
+```
+
+| Wave | Active senders | Throughput (persisted + delivered + acked) |
+|------|---------------:|--------------------------------------------|
+| 1 — 50 % | ~15 | **~1,508 msg/s** |
+| 2 — 100 % | ~30 | **~3,025 msg/s** |
+| 3 — 75 % | ~22 | **~2,220 msg/s** |
+
+| Signal — full 10-min, 3-wave run (limiter off) | Before fix | After fix |
+|------------------------------------------------|-----------|-----------|
+| Persistence | **froze at 341,501** (stalled) | **climbed steadily — 1,324,500 total** |
+| Peak-wave throughput | **0** (stalled) | **~3,025 msg/s**, flat |
 | `BackPressureFailure` | stream killed | **0** |
-| Messages shed | — (all dropped at ingress) | **48** (negligible) |
+| Messages shed | — (all dropped at ingress) | **0** |
 | Inbound queue drops | ~987k | **0** |
-| Full GC / heap / RSS | — | **0** / ~87 MB / ~0.76 GB |
+| Errors (KO) | — | **0** of 1,333,617 ops |
+| Full GC | — | **0** (396 young / 1.28 s, ~3.2 ms avg) |
+| Heap / RSS / VIRT | — | flat **~88 MB / ~0.76 GB / ~3.23 GB** |
+| CPU | 2–3 % (stalled) | **6–12 %** |
+
+> Single-host caveat: the co-located load generator (holding 1,170 receiver sockets *and* fanning out
+> ~3,000 msg/s to them) couldn't sustain all receivers — the online count drifted from ~1,150 toward
+> ~380 over the run (only 8 server-side delivery closes). Throughput and persistence were unaffected;
+> off-box load generation removes this.
 
 **Takeaways.** (1) In production the credit limiter caps per-connection rate, so this overload regime is
 unreachable. (2) Even past it, the persist pipeline now **degrades gracefully** (shed-with-notice) rather
