@@ -60,6 +60,7 @@ public class InboundPersistBatcher {
     private DistributionSummary batchSize;
     private Counter batches;
     private Counter fallbacks;
+    private Counter shed;
     private Timer flushTimer;
 
     @PostConstruct
@@ -75,12 +76,27 @@ public class InboundPersistBatcher {
                 .description("Inbound persist batch transactions committed").register(meterRegistry);
         fallbacks = Counter.builder("messenger.persist.batch.fallbacks")
                 .description("Messages retried individually after a batch transaction failure").register(meterRegistry);
+        shed = Counter.builder("messenger.persist.batch.shed")
+                .description("Messages shed (completed FAILED) when batches outran the persist sink").register(meterRegistry);
         flushTimer = Timer.builder("messenger.persist.batch.flush")
                 .description("Latency of one inbound persist batch flush").register(meterRegistry);
 
         Multi.createFrom().<Pending>emitter(em -> emitter.set(em), BackPressureStrategy.BUFFER)
                 .onOverflow().bufferUnconditionally()
                 .group().intoLists().of(maxSize, Duration.ofMillis(lingerMs))
+                // Demand cushion: the timed group flush (MultiBufferWithTimeoutOp) emits a batch when its
+                // linger fires REGARDLESS of downstream demand. If `merge` is saturated (all
+                // maxConcurrentBatches in flight, demand=0) that throws BackPressureFailure and kills the
+                // whole stream. Draining into a drop-overflow gives the group unbounded demand (so it never
+                // fails) and, under sustained source-faster-than-sink overload, sheds whole batches —
+                // completing each message FAILED so the sender gets an overload notice and retries (never a
+                // silent loss). In production the per-connection credit limiter keeps this regime unreachable.
+                .onOverflow().invoke(batch -> {
+                    shed.increment(batch.size());
+                    for (Pending p : batch) {
+                        p.done().complete(StageResult.failed());
+                    }
+                }).drop()
                 .onItem().transformToUni(this::flush).merge(concurrency)
                 .onFailure().invoke(f -> Log.error("Persist-batch stream failed — retrying", f))
                 .onFailure().retry().withBackOff(Duration.ofMillis(200), Duration.ofSeconds(5)).indefinitely()
