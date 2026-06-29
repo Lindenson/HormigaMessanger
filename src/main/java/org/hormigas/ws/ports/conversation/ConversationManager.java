@@ -1,6 +1,8 @@
 package org.hormigas.ws.ports.conversation;
 
 import io.smallrye.mutiny.Uni;
+import org.hormigas.ws.domain.conversation.ChatQuery;
+import org.hormigas.ws.domain.conversation.ChatStats;
 import org.hormigas.ws.domain.conversation.Conversation;
 
 import java.util.List;
@@ -30,4 +32,15 @@ public interface ConversationManager {
 
     /** Set the block flag for the given participant's side. */
     Uni<Void> setBlocked(String chatId, String userId, boolean blocked);
+
+    // ── admin reads (unfiltered by participant state) ──────────────────────────
+
+    /** All conversations matching the query's filters/sort, paged. Not visibility-filtered (admin). */
+    Uni<List<Conversation>> findAll(ChatQuery query);
+
+    /** Count of conversations matching the query's filters (paging ignored). */
+    Uni<Long> count(ChatQuery query);
+
+    /** Platform-wide aggregate counts (total, blocked). */
+    Uni<ChatStats> stats();
 }

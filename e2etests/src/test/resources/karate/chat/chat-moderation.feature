@@ -7,9 +7,9 @@ Feature: Soft-delete & blacklist (UC-U03 soft-delete, UC-H07 block)
     * def c = 'client-' + uid
     * def m = 'master-' + uid
     * def cHdr = idHeaders(c, 'C', 'CLIENT', 'c@test.com')
-    # create a chat for the pair
+    # create a chat for the pair (service-to-service / admin only — D4)
     Given path '/api/chats'
-    And headers masterHeaders()
+    And headers serviceHeaders()
     And request { clientId: '#(c)', masterId: '#(m)', metadata: {} }
     When method POST
     Then status 201

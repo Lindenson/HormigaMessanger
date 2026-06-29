@@ -47,8 +47,12 @@ public interface Chats {
     /** Like {@link #canSend} but also returns the resolved chat on ALLOW (to derive the recipient). */
     Uni<SendDecision> evaluateSend(String conversationId, String senderId);
 
-    /** Conversation-scoped, cursor-paginated history read (UC-U50), membership-guarded. */
-    Uni<Guarded<List<Message>>> history(String chatId, String userId, String since, Integer limit);
+    /**
+     * Conversation-scoped, cursor-paginated history read (UC-U50), membership-guarded. Floored at the
+     * caller's delete watermark unless {@code includeDeleted} ("delete for me" — see {@link Conversation}).
+     */
+    Uni<Guarded<List<Message>>> history(String chatId, String userId, String since, Integer limit,
+                                        boolean includeDeleted);
 
     /** Delete a message (only if it exists and is not frozen), membership-guarded (UC-U21). */
     Uni<Guarded<DeleteOutcome>> deleteMessage(String chatId, String userId, String messageId);

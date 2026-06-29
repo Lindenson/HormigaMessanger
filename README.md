@@ -69,19 +69,25 @@ PostgreSQL, Redis and WebSocket transports swap out without touching business lo
 
 - **Identity** — a conversation is the **pair `(clientId, masterId)`** (two Ory identities).
   **1:1 only; no group chats.**
-- **Universal, idempotent creation** — one core *create-chat* operation, invoked by interchangeable
-  inbound adapters. Same logical pair → the existing chat is returned, never duplicated.
-  - ✅ **REST** adapter (`POST /api/chats`) and **admin/service** calls — implemented.
-  - 🟡 **Order event** adapter ("a master expressed interest in an order", Kafka `order.events`) —
-    **deferred** (see [Roadmap](#-roadmap--deferred-work)). The Kafka listener is just another
-    adapter over the same core op.
+- **Creation is service-to-service / admin only** — chats are **provisioned by the platform**, never
+  by an end client. One core *create-chat* operation (idempotent on the pair → the existing chat is
+  returned, never duplicated), invoked by interchangeable inbound adapters:
+  - ✅ **Order event** adapter — a master expresses interest / a new order (Kafka `order.events`) →
+    creates the `(client, master)` chat with the `orderId` as metadata (UC-H01).
+  - ✅ **REST** adapter (`POST /api/chats`) — restricted to callers the Ory edge marks
+    **`X-Role` ∈ {ADMIN, SERVICE}**; a client caller gets `403`.
 - **Order-agnostic** — **one conversation per pair, reused across orders.** The messenger never
-  models/branches/groups by order; the `orderId` travels only as **opaque metadata**. Grouping by
-  order is a **frontend** concern.
-- **Soft delete (per participant)** — either side can hide the chat from their own view; it is
-  **never removed from the system** and the peer is unaffected.
-- **Blacklist/block (per participant)** — either side can block the other; while blocked, sending
-  between them is rejected. Unblock restores messaging.
+  models/branches/groups by order; the `orderId` travels only as **opaque metadata** the platform
+  sets at creation. Grouping by order is a **frontend** concern.
+- **Delete is "delete for me" (per participant, watermark)** — deleting a chat sets that participant's
+  **delete watermark** to the chat's latest message; their history and chat list are filtered below it
+  for **them only**. The peer is unaffected, rows are never removed (admins see everything), and a new
+  message (e.g. a new order's) above the watermark **revives** the chat in their list automatically.
+  A participant can read their deleted history back with `?includeDeleted=true`. Delete does **not**
+  stop messaging.
+- **Blacklist/block (per participant, mutual)** — either side can block the other; while blocked,
+  sending between them is rejected for **both**. Unblock restores messaging. Block is the only
+  terminal messaging stop (delete is not). A blocked chat still **appears** in the caller's list.
 
 > **Dual-driven principle.** Every event-capable operation (create chat, freeze) is **one core use
 > case** exposed via **two inbound adapters — REST and an event consumer**. Triggers are
@@ -275,6 +281,8 @@ That read-through is exactly what guarantees nothing slips through across discon
 History sync is **conversation-scoped and cursor-paginated**:
 `GET /api/chats/{id}/messages?since=<last messageId>&limit=<n>` (default 200, max 500). Because
 `messageId` is a ULID, it doubles as the page cursor (`WHERE message_id > $since ORDER BY message_id`).
+The effective floor is `max(since, the caller's delete watermark)`, so a chat the caller deleted
+syncs only its post-delete messages — pass `includeDeleted=true` to read the deleted history back.
 
 ---
 
@@ -347,11 +355,11 @@ id** (ordering is client-authoritative). Missing/blank identity on the handshake
 
 | Method & path | Purpose | Notable responses |
 |---------------|---------|-------------------|
-| `POST /api/chats` | Create/return chat for `{clientId, masterId, metadata}` (idempotent) | `201` created / `200` existing |
-| `GET /api/chats` | List the caller's chats (excl. soft-deleted, recent-first) | `200` |
-| `GET /api/chats/{id}/messages?since=&limit=` | Cursor-paginated history (membership-gated) | `200` / `403` / `404` |
-| `DELETE /api/chats/{id}` | Soft-delete (per participant) | `204` |
-| `POST /api/chats/{id}/block` · `DELETE …/block` | Blacklist / unblock the peer | `204` |
+| `POST /api/chats` | Create/return chat for `{clientId, masterId, metadata}` (idempotent). **ADMIN/SERVICE only** — clients cannot create chats | `201` created / `200` existing / `403` non-service |
+| `GET /api/chats` | List the caller's chats — recent-first, **includes blocked**, excludes the caller's deleted chats (until a newer message revives them) | `200` |
+| `GET /api/chats/{id}/messages?since=&limit=&includeDeleted=` | Cursor-paginated history (membership-gated). Floored at the caller's delete watermark unless `includeDeleted=true` | `200` / `403` / `404` |
+| `DELETE /api/chats/{id}` | Delete the chat **for the caller** ("delete for me" — sets their watermark; reversible by new activity) | `204` |
+| `POST /api/chats/{id}/block` · `DELETE …/block` | Blacklist / unblock the peer (mutual; the only terminal messaging stop) | `204` |
 | `DELETE /api/chats/{id}/messages/{messageId}` | Delete a message (only if not frozen) | `204` / `404` / `409` frozen |
 | `POST /api/chats/{id}/freeze` `{orderId}` | Freeze that order's messages (one-way) | `200 {frozen:n}` / `400` no orderId |
 | `POST /api/chats/{id}/read` | Recipient marks READ (reconnect/bulk **fallback**; primary is WS `READ_IN`) | `200 {read:n}` |
@@ -367,6 +375,17 @@ id** (ordering is client-authoritative). Missing/blank identity on the handshake
 | `POST /api/system/notify` | Emit a must-arrive system notice (Strategy C) — **ADMIN/SERVICE only** |
 | `GET /q/health`, `GET /q/metrics` | Health & Prometheus metrics |
 | `GET /q/openapi`, `GET /q/swagger-ui` | OpenAPI spec + Swagger UI (REST) |
+
+### REST — admin console (`/api/admin/chats`, **ADMIN only**)
+
+Platform-wide reads for operators. Unlike the participant endpoints these are **not membership-gated
+and not per-side filtered** — an admin sees every chat regardless of who deleted or blocked it. A
+non-ADMIN caller (incl. `SERVICE`) gets `403`.
+
+| Method & path | Purpose | Notable responses |
+|---------------|---------|-------------------|
+| `GET /api/admin/chats?participant=&conversationId=&blocked=&from=&to=&sort=&limit=&offset=` | List all chats with filters (participant on either side, single id, `blocked=true`, `created_at` range `from`/`to` as ISO-8601), `sort` ∈ `created_asc\|created_desc\|updated_asc\|updated_desc`, paging (`limit` ≤ 200, default 50). Returns `{items, total, limit, offset}` | `200` / `400` bad filter / `403` |
+| `GET /api/admin/chats/stats` | Platform counts `{total, blocked}` | `200` / `403` |
 
 ### Kafka — `order.events` (inbound)
 
@@ -413,13 +432,26 @@ WebSocket max message size is 64 KiB.
 
 ## 🚀 Performance
 
-**~3,000 messages/second, sustained, at a 20 ms p95** — held flat for minutes at 600 live WebSocket
-clients, with no message loss, no full GC and a memory footprint that settles and stays put. Well past
-the ≥ 1,000 msg/s target.
+**1,000 concurrent clients holding real conversations is a fraction of capacity.** A 5-minute soak
+with **1,000 live WebSocket sessions** (500 chat pairs) — taking turns with human think-time, marking
+messages read, and 30 % of them dropping & reconnecting mid-chat — ran at **p95 13 ms, zero server
+drops, zero full GC**, with heap flat ~88 MB and RSS settled ~0.72 GB under a bounded JVM.
 
 ```mermaid
 xychart-beta
-    title "Sustained throughput (messages / second)"
+    title "Send→SENT latency at 1,000 concurrent clients (ms)"
+    x-axis ["mean", "p75", "p95", "p99", "max"]
+    y-axis "ms" 0 --> 100
+    bar [4, 8, 13, 19, 91]
+```
+
+And the **peak capacity** (synthetic stress test, think-time removed) is **~3,000 messages/second,
+sustained, at a 20 ms p95** — held flat for minutes with no message loss and no full GC. Well past the
+≥ 1,000 msg/s target.
+
+```mermaid
+xychart-beta
+    title "Peak throughput — stress test (messages / second)"
     x-axis ["50 pairs", "100 pairs", "200 pairs", "300 pairs"]
     y-axis "msg/s" 0 --> 3200
     bar [520, 1040, 2040, 3000]
@@ -561,7 +593,8 @@ MINIO_ENDPOINT=http://<browser-reachable-host>:9000 docker compose up -d # joins
 
 ## ✅ Status vs functional requirements
 
-**Implemented & tested:** chat lifecycle (idempotent create, list, soft-delete, blacklist),
+**Implemented & tested:** chat lifecycle (service/admin-only idempotent create, list incl. blocked,
+per-side "delete for me" watermark, blacklist, admin console),
 send-guard + `SENT` ACK, online delivery + offline hold, **ACK-driven `SENT→DELIVERED→READ`** + read
 receipts, immutability + conditional delete + **order-scoped freeze**, frozen retention class
 (+ **scheduled retention sweep**), presence + **offline-on-delivery-failure** + **heartbeat/pong

@@ -13,9 +13,9 @@ Feature: WebRTC call signaling (Strategy S, UC-U30 / UC-H06)
     * def mId = 'master-' + uid
     * def mHdr = idHeaders(mId, 'M', 'MASTER', 'm@test.com')
     * def cHdr = idHeaders(cId, 'C', 'CLIENT', 'c@test.com')
-    # create the conversation (REST) — the send-guard checks membership
+    # create the conversation (REST) — service-to-service / admin only (D4); send-guard checks membership
     Given path '/api/chats'
-    And headers mHdr
+    And headers serviceHeaders()
     And request { clientId: '#(cId)', masterId: '#(mId)', metadata: {} }
     When method POST
     Then status 201

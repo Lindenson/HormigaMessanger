@@ -14,6 +14,7 @@ public interface MessengerConfig {
     Collector collector();
     Storage storage();
     Idempotent idempotent();
+    ConversationCache conversationCache();
 
     interface Inbound {
         int queueSize();
@@ -74,6 +75,19 @@ public interface MessengerConfig {
 
     interface Storage {
         String service();
+    }
+
+    /**
+     * In-process L1 conversation cache (Phase 2, 4.1). Declared here so the strict
+     * {@code processing.messages} mapping accepts these keys; {@code CachedConversationDirectory}
+     * reads the same canonical keys directly. Defaults match that adapter's.
+     */
+    interface ConversationCache {
+        @WithDefault("100000")
+        long maxSize();
+
+        @WithDefault("60")
+        int ttlSeconds();
     }
 
     interface Idempotent {

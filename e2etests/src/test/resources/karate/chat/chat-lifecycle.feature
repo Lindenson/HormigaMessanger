@@ -12,7 +12,7 @@ Feature: Chat lifecycle (UC-U01, UC-U02, UC-H02)
 
   Scenario: UC-U01 / UC-H02 — create a chat via REST is idempotent
     Given path '/api/chats'
-    And headers masterHeaders()
+    And headers serviceHeaders()
     And request { clientId: '#(c)', masterId: '#(m)', metadata: { orderId: 'order-123' } }
     When method POST
     Then status 201
@@ -21,7 +21,7 @@ Feature: Chat lifecycle (UC-U01, UC-U02, UC-H02)
     And match response.masterId == m
     # same pair again → same chat, no duplicate (idempotent), 200 not 201
     Given path '/api/chats'
-    And headers masterHeaders()
+    And headers serviceHeaders()
     And request { clientId: '#(c)', masterId: '#(m)', metadata: { orderId: 'order-456' } }
     When method POST
     Then status 200
@@ -30,7 +30,7 @@ Feature: Chat lifecycle (UC-U01, UC-U02, UC-H02)
   Scenario: UC-U03 — a participant lists their chats
     # create a chat for this client, then list as that client
     Given path '/api/chats'
-    And headers masterHeaders()
+    And headers serviceHeaders()
     And request { clientId: '#(c)', masterId: '#(m)', metadata: {} }
     When method POST
     Then status 201
@@ -43,7 +43,7 @@ Feature: Chat lifecycle (UC-U01, UC-U02, UC-H02)
 
   Scenario: UC-U61 — a non-participant cannot read a chat (403)
     Given path '/api/chats'
-    And headers masterHeaders()
+    And headers serviceHeaders()
     And request { clientId: '#(c)', masterId: '#(m)', metadata: {} }
     When method POST
     Then status 201
@@ -51,4 +51,11 @@ Feature: Chat lifecycle (UC-U01, UC-U02, UC-H02)
     Given path '/api/chats', chatId, 'messages'
     And headers idHeaders(otherId, otherName, 'CLIENT', otherEmail)
     When method GET
+    Then status 403
+
+  Scenario: D4 — an end client may NOT create a chat (chats are provisioned service-to-service)
+    Given path '/api/chats'
+    And headers idHeaders(c, 'C', 'CLIENT', 'c@test.com')
+    And request { clientId: '#(c)', masterId: '#(m)', metadata: {} }
+    When method POST
     Then status 403

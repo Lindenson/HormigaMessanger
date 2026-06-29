@@ -34,6 +34,12 @@ public class ChatResource {
 
     public record FreezeRequest(String orderId) {}
 
+    /**
+     * Create a chat (idempotent on the pair). <b>Service-to-service / admin only</b> (D4): chats are
+     * provisioned by the platform — a master-interested / new-order event (Kafka {@code order.events}),
+     * or an operator — never by an end client. Mirrors {@code /api/system/notify}: requires the Ory
+     * edge to inject {@code X-Role} ∈ {ADMIN, SERVICE}.
+     */
     @POST
     public Uni<Response> create(
             @HeaderParam(IdentityHeaders.USER_ID) String userId,
@@ -44,6 +50,9 @@ public class ChatResource {
 
         if (auth.fromHeaders(userId, userName, role, email).isEmpty()) {
             return unauthorized();
+        }
+        if (!"ADMIN".equals(role) && !"SERVICE".equals(role)) {
+            return Uni.createFrom().item(Response.status(Response.Status.FORBIDDEN).build());
         }
         if (req == null || req.clientId() == null || req.masterId() == null) {
             return Uni.createFrom().item(Response.status(Response.Status.BAD_REQUEST).build());
@@ -76,6 +85,7 @@ public class ChatResource {
             @PathParam("chatId") String chatId,
             @QueryParam("since") String since,
             @QueryParam("limit") Integer limit,
+            @QueryParam("includeDeleted") @DefaultValue("false") boolean includeDeleted,
             @HeaderParam(IdentityHeaders.USER_ID) String userId,
             @HeaderParam(IdentityHeaders.USER_NAME) String userName,
             @HeaderParam(IdentityHeaders.USER_ROLE) String role,
@@ -86,7 +96,8 @@ public class ChatResource {
             return unauthorized();
         }
         // Conversation-scoped, cursor-paginated history sync (UC-U50). Guard + clamping live in core.
-        return conversations.history(chatId, caller.get().id(), since, limit)
+        // includeDeleted=true returns the caller's deleted (pre-watermark) history too ("show deleted").
+        return conversations.history(chatId, caller.get().id(), since, limit, includeDeleted)
                 .map(this::guardedToResponse);
     }
 
