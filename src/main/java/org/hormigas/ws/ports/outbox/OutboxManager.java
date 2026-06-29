@@ -7,6 +7,14 @@ import java.util.List;
 import java.util.Map;
 
 public interface OutboxManager<T> {
+    /**
+     * Persist a single message's {@code history+outbox} rows in its own transaction.
+     *
+     * @deprecated Per-message persistence is the throughput ceiling (one tx/fsync per message — see
+     * {@code docs/PERFORMANCE.md}). Use {@link #saveBatch} on the hot inbound path; {@code save} is
+     * retained only as the per-message fallback the batcher uses to isolate a poison row.
+     */
+    @Deprecated
     Uni<StageResult<T>> save(T message);
 
     /**
@@ -27,7 +35,16 @@ public interface OutboxManager<T> {
     Uni<StageResult<T>> saveTransient(T message);
 
     Uni<StageResult<T>> remove(T message);
+
+    /**
+     * Claim a single message from the outbox.
+     *
+     * @deprecated Single-row claims multiply DB round-trips; the poller drains via {@link #fetchBatch}
+     * (size + time bounded). Use {@code fetchBatch}. Kept for compatibility; no hot-path caller.
+     */
+    @Deprecated
     Uni<T> fetch();
+
     Uni<List<T>> fetchBatch(int batchSize);
     Uni<Integer> collectGarbage(Long from);
 

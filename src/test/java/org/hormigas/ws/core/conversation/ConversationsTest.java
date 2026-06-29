@@ -31,6 +31,13 @@ class ConversationsTest {
         Conversations s = new Conversations();
         s.repository = repo;
         s.idGenerator = () -> "gen-1";
+        // cache reads delegate straight to the repo (no caching under unit test); invalidate is a no-op
+        s.directory = new org.hormigas.ws.ports.conversation.ConversationDirectory() {
+            public io.smallrye.mutiny.Uni<org.hormigas.ws.domain.conversation.Conversation> findById(String id) {
+                return repo.findById(id);
+            }
+            public void invalidate(String id) { }
+        };
         return s;
     }
 

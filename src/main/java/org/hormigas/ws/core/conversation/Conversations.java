@@ -11,6 +11,7 @@ import org.hormigas.ws.domain.conversation.SendCheck;
 import org.hormigas.ws.domain.conversation.SendDecision;
 import org.hormigas.ws.domain.generator.IdGenerator;
 import org.hormigas.ws.domain.message.Message;
+import org.hormigas.ws.ports.conversation.ConversationDirectory;
 import org.hormigas.ws.ports.conversation.ConversationManager;
 import org.hormigas.ws.core.conversation.Chats;
 import org.hormigas.ws.ports.history.History;
@@ -34,6 +35,10 @@ public class Conversations implements Chats {
 
     @Inject
     ConversationManager repository;
+
+    /** Cached read-side for the hot membership/block lookup (Phase 2, 4.1). Reads go through here; */
+    @Inject
+    ConversationDirectory directory;
 
     @Inject
     IdGenerator idGenerator;
@@ -73,7 +78,7 @@ public class Conversations implements Chats {
     }
 
     public Uni<Conversation> findById(String id) {
-        return repository.findById(id);
+        return directory.findById(id);
     }
 
     /**
@@ -85,14 +90,16 @@ public class Conversations implements Chats {
         return repository.findByPair(clientId, masterId);
     }
 
-    /** Soft-delete (hide) the chat for the caller; membership-checked. */
+    /** Soft-delete (hide) the chat for the caller; membership-checked. Invalidates the cache. */
     public Uni<Outcome> hide(String chatId, String userId) {
-        return guarded(chatId, userId, () -> repository.hideFor(chatId, userId));
+        return guarded(chatId, userId, () -> repository.hideFor(chatId, userId)
+                .invoke(() -> directory.invalidate(chatId)));
     }
 
-    /** Block/unblock the peer for the caller; membership-checked. */
+    /** Block/unblock the peer for the caller; membership-checked. Invalidates the cache (write-through). */
     public Uni<Outcome> setBlocked(String chatId, String userId, boolean blocked) {
-        return guarded(chatId, userId, () -> repository.setBlocked(chatId, userId, blocked));
+        return guarded(chatId, userId, () -> repository.setBlocked(chatId, userId, blocked)
+                .invoke(() -> directory.invalidate(chatId)));
     }
 
     private Uni<Outcome> guarded(String chatId, String userId, Supplier<Uni<Void>> action) {
@@ -106,7 +113,7 @@ public class Conversations implements Chats {
      * use case — so authorization lives here, never re-implemented in an adapter.
      */
     public <T> Uni<Guarded<T>> guardedRead(String chatId, String userId, Function<Conversation, Uni<T>> action) {
-        return repository.findById(chatId).flatMap(c -> {
+        return directory.findById(chatId).flatMap(c -> {
             if (c == null) return Uni.createFrom().item(Guarded.<T>notFound());
             if (!c.hasParticipant(userId)) return Uni.createFrom().item(Guarded.<T>forbidden());
             return action.apply(c).map(Guarded::ok);
@@ -158,7 +165,7 @@ public class Conversations implements Chats {
         if (conversationId == null || conversationId.isBlank()) {
             return Uni.createFrom().item(new SendDecision(SendCheck.NO_CONVERSATION, null));
         }
-        return repository.findById(conversationId).map(c -> {
+        return directory.findById(conversationId).map(c -> {
             if (c == null) return new SendDecision(SendCheck.NO_CONVERSATION, null);
             if (!c.hasParticipant(senderId)) return new SendDecision(SendCheck.NOT_MEMBER, null);
             if (c.isBlocked()) return new SendDecision(SendCheck.BLOCKED, null);

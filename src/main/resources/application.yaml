@@ -70,6 +70,12 @@
           max-size: 64
           linger-ms: 5
           max-concurrent-batches: 8
+      # In-process L1 cache for the hot membership/block lookup the send-guard does on every inbound
+      # message (Phase 2, 4.1). Write-through invalidation on block/unblock/soft-delete + this TTL
+      # backstop. Single-instance; a distributed Redis L2 is a documented future (multi-instance/sharding).
+      conversation-cache:
+        max-size: 100000
+        ttl-seconds: 60
       outbound:
         batch-size: 1500
         queue-size: 5000
