@@ -83,15 +83,37 @@ lost), and **the server stays idle**:
 | Full GC / heap / RSS / VIRT | **0** / ~88 MB / ~0.72 GB / ~3.24 GB |
 | Inbound queue drops | **0** (excess was shed upstream, at the credit gate) |
 
-**The guard rail is load-bearing — and we proved it.** With the limiter *removed* (a deliberate
-test-only override) and the same 30 connections fire-hosing ~3,000 msg/s with no client-side pacing, the
-inbound persist pipeline was driven past its backpressure budget: at the 30-connection wave
-`InboundPersistBatcher` raised a Mutiny `BackPressureFailure` and the persist stream stalled (CPU was
-only 2–3 % — not a resource limit, a backpressure-handling gap). The 15-connection wave (~1,500 msg/s)
-stayed clean. **Conclusion:** the credit limiter is what keeps a few aggressive clients from
-overwhelming the pipeline; hardening the batcher to *degrade gracefully* past its budget (bounded buffer
-+ overload-notice instead of failing the stream) is tracked as a backlog item. In production the limiter
-is on, and this regime is unreachable.
+### Beyond the guard rail — graceful degradation
+
+What happens if the limiter is bypassed and the persist pipeline is *overloaded* anyway? It must shed,
+not stall. We checked by **removing the limiter** (a deliberate test-only override) and fire-hosing
+~3,000 msg/s from just **30 connections** with no client-side pacing.
+
+This surfaced — and we fixed — a real defect: the group-commit's timed flush
+(`group().intoLists().of(maxSize, lingerMs)`, a `MultiBufferWithTimeoutOp`) emitted batches **ignoring
+downstream demand**, so when `merge(maxConcurrentBatches)` was saturated it raised a Mutiny
+`BackPressureFailure` and **killed the persist stream** — persistence collapsed to ~0 at 2–3 % CPU (a
+backpressure-handling bug, not a resource limit). The fix drains the group through
+`onOverflow().invoke(shed).drop()`: the group always has demand (never fails), and genuine overflow
+sheds whole batches — each message completed `FAILED` so its sender gets an `overloaded` notice and
+retries (never a silent loss).
+
+After the fix, the same brutal run is a non-event — the pipeline **sustained ~3,000 msg/s from 30
+connections** and shed almost nothing:
+
+| Signal (limiter off, 30 fire-hose senders) | Before fix | After fix |
+|---------------------------------------------|-----------|-----------|
+| Persisted (6-min run) | froze at **341,501** | **792,952** |
+| Peak-wave throughput | **0** (stalled) | **~3,000 msg/s** |
+| `BackPressureFailure` | stream killed | **0** |
+| Messages shed | — (all dropped at ingress) | **48** (negligible) |
+| Inbound queue drops | ~987k | **0** |
+| Full GC / heap / RSS | — | **0** / ~87 MB / ~0.76 GB |
+
+**Takeaways.** (1) In production the credit limiter caps per-connection rate, so this overload regime is
+unreachable. (2) Even past it, the persist pipeline now **degrades gracefully** (shed-with-notice) rather
+than failing. (3) The persist pipeline's own ceiling is comfortably **above 3,000 msg/s** — the earlier
+"stall" was purely the backpressure bug, never a throughput wall.
 
 ---
 
