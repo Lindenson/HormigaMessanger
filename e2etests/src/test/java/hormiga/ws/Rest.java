@@ -55,11 +55,12 @@ public final class Rest {
         }
     }
 
-    /** Create the (client, master) conversation and return its id. */
+    /** Create the (client, master) conversation and return its id. Chats are provisioned
+     *  service-to-service / admin only (D4) — create with a SERVICE identity, not a participant. */
     public static String createChat(String clientId, String masterId) {
         Resp r = post("/api/chats",
                 "{\"clientId\":\"" + clientId + "\",\"masterId\":\"" + masterId + "\",\"metadata\":{}}",
-                hdr(masterId, "MASTER"));
+                hdr("platform-svc", "SERVICE"));
         if (r.status() != 201 && r.status() != 200) {
             throw new IllegalStateException("createChat failed: HTTP " + r.status());
         }

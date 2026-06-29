@@ -41,6 +41,9 @@ function fn() {
   };
   config.masterHeaders = function () { return config.idHeaders(config.masterId, config.masterName, 'MASTER', config.masterEmail); };
   config.clientHeaders = function () { return config.idHeaders(config.clientId, config.clientName, 'CLIENT', config.clientEmail); };
+  // Chat creation is service-to-service / admin only (D4) — chats are provisioned by the platform,
+  // not by end clients. Use this for POST /api/chats.
+  config.serviceHeaders = function () { return config.idHeaders('platform-svc', 'Platform Service', 'SERVICE', config.masterEmail); };
   config.noAuthHeaders = function () { return { 'Content-Type': 'application/json', 'Accept': 'application/json' }; };
 
   // NB: Karate 1.4.1 + GraalVM on this JDK cannot build a JsFunction WS handler — WS tests use a

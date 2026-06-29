@@ -90,7 +90,11 @@ public class Conversations implements Chats {
         return repository.findByPair(clientId, masterId);
     }
 
-    /** Soft-delete (hide) the chat for the caller; membership-checked. Invalidates the cache. */
+    /**
+     * Delete the chat for the caller ("delete for me"): sets the caller's delete watermark to the
+     * chat's latest messageId, so their history/list is floored there until newer messages arrive.
+     * Membership-checked; invalidates the cache.
+     */
     public Uni<Outcome> hide(String chatId, String userId) {
         return guarded(chatId, userId, () -> repository.hideFor(chatId, userId)
                 .invoke(() -> directory.invalidate(chatId)));
@@ -120,10 +124,30 @@ public class Conversations implements Chats {
         });
     }
 
-    /** Conversation-scoped, cursor-paginated history read (UC-U50), membership-guarded. */
-    public Uni<Guarded<List<Message>>> history(String chatId, String userId, String since, Integer limit) {
+    /**
+     * Conversation-scoped, cursor-paginated history read (UC-U50), membership-guarded.
+     *
+     * <p>Soft-delete (D3, "delete for me"): each participant's read is floored at their own delete
+     * watermark — messages at/below it are hidden for that side only (the peer and the admin path are
+     * unaffected). The effective cursor is {@code max(since, myWatermark)}, so deletion composes with
+     * normal pagination. {@code includeDeleted} bypasses the watermark (a participant's "show deleted"
+     * / the admin view) and reads from {@code since} alone. The admin history path does not go through
+     * this guard and always reads unfiltered.
+     */
+    public Uni<Guarded<List<Message>>> history(String chatId, String userId, String since, Integer limit,
+                                               boolean includeDeleted) {
         int pageSize = limit == null ? DEFAULT_HISTORY_LIMIT : Math.min(Math.max(1, limit), MAX_HISTORY_LIMIT);
-        return guardedRead(chatId, userId, conv -> history.getByConversation(chatId, since, pageSize));
+        return guardedRead(chatId, userId, conv -> {
+            String floor = includeDeleted ? since : laterCursor(since, conv.deleteCursorFor(userId));
+            return history.getByConversation(chatId, floor, pageSize);
+        });
+    }
+
+    /** The later of two ULID cursors (lexicographic == chronological); null means "no floor". */
+    private static String laterCursor(String a, String b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return a.compareTo(b) >= 0 ? a : b;
     }
 
     /** Delete a message (only if it exists and is not frozen), membership-guarded (UC-U21). */
@@ -147,9 +171,10 @@ public class Conversations implements Chats {
     }
 
     /**
-     * Whether {@code senderId} may send into conversation {@code conversationId} right now:
-     * the conversation must exist, the sender must be a participant, and neither side may have
-     * blocked the other (UC-H07 / FR-MSG-01). Enforced on the WS send path.
+     * Whether {@code senderId} may send into conversation {@code conversationId} right now: the
+     * conversation must exist, the sender must be a participant, neither side may have deleted the
+     * chat (terminal close), and neither side may have blocked the other (UC-H07 / FR-MSG-01).
+     * Enforced on the WS send path.
      */
     public Uni<SendCheck> canSend(String conversationId, String senderId) {
         return evaluateSend(conversationId, senderId).map(SendDecision::check);
@@ -168,6 +193,8 @@ public class Conversations implements Chats {
         return directory.findById(conversationId).map(c -> {
             if (c == null) return new SendDecision(SendCheck.NO_CONVERSATION, null);
             if (!c.hasParticipant(senderId)) return new SendDecision(SendCheck.NOT_MEMBER, null);
+            // Delete is "delete for me" (a per-side history watermark), not a messaging stop — the
+            // peer keeps writing and a new message reappears above the watermark. Only block is terminal.
             if (c.isBlocked()) return new SendDecision(SendCheck.BLOCKED, null);
             return new SendDecision(SendCheck.ALLOW, c);
         });

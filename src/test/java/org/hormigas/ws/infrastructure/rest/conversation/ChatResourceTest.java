@@ -21,6 +21,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -65,25 +66,33 @@ class ChatResourceTest {
     }
 
     @Test
-    @DisplayName("create with a missing participant → 400")
+    @DisplayName("create as a non-service/admin caller (e.g. CLIENT) → 403 (D4: service-to-service only)")
+    void createForbiddenForNonService() {
+        authenticated(); // identity resolves, but the role is not ADMIN/SERVICE
+        assertEquals(403, status(resource.create("u", "n", "CLIENT", "e",
+                new ChatResource.CreateChatRequest("A", "M", Map.of()))));
+    }
+
+    @Test
+    @DisplayName("create with a missing participant → 400 (for an authorized SERVICE caller)")
     void createBadRequest() {
         authenticated();
-        assertEquals(400, status(resource.create("u", "n", "r", "e",
+        assertEquals(400, status(resource.create("u", "n", "SERVICE", "e",
                 new ChatResource.CreateChatRequest(null, "M", Map.of()))));
     }
 
     @Test
-    @DisplayName("create a new chat → 201, an existing one → 200 (idempotent)")
+    @DisplayName("create a new chat → 201, an existing one → 200 (idempotent); SERVICE/ADMIN only")
     void createNewVsExisting() {
         authenticated();
         when(conversations.createChat("A", "M", Map.of()))
                 .thenReturn(Uni.createFrom().item(new CreateResult(CHAT, true)));
-        assertEquals(201, status(resource.create("u", "n", "r", "e",
+        assertEquals(201, status(resource.create("u", "n", "SERVICE", "e",
                 new ChatResource.CreateChatRequest("A", "M", Map.of()))));
 
         when(conversations.createChat("A", "M", Map.of()))
                 .thenReturn(Uni.createFrom().item(new CreateResult(CHAT, false)));
-        assertEquals(200, status(resource.create("u", "n", "r", "e",
+        assertEquals(200, status(resource.create("u", "n", "ADMIN", "e",
                 new ChatResource.CreateChatRequest("A", "M", Map.of()))));
     }
 
@@ -99,17 +108,17 @@ class ChatResourceTest {
     @DisplayName("messages: maps Guarded NOT_FOUND→404, FORBIDDEN→403, OK→200")
     void messagesGating() {
         authenticated();
-        when(conversations.history(eq("missing"), eq("A"), any(), any()))
+        when(conversations.history(eq("missing"), eq("A"), any(), any(), anyBoolean()))
                 .thenReturn(Uni.createFrom().item(Guarded.notFound()));
-        assertEquals(404, status(resource.messages("missing", null, null, "u", "n", "r", "e")));
+        assertEquals(404, status(resource.messages("missing", null, null, false, "u", "n", "r", "e")));
 
-        when(conversations.history(eq("c2"), eq("A"), any(), any()))
+        when(conversations.history(eq("c2"), eq("A"), any(), any(), anyBoolean()))
                 .thenReturn(Uni.createFrom().item(Guarded.forbidden()));
-        assertEquals(403, status(resource.messages("c2", null, null, "u", "n", "r", "e")));
+        assertEquals(403, status(resource.messages("c2", null, null, false, "u", "n", "r", "e")));
 
-        when(conversations.history(eq("chat-1"), eq("A"), any(), any()))
+        when(conversations.history(eq("chat-1"), eq("A"), any(), any(), anyBoolean()))
                 .thenReturn(Uni.createFrom().item(Guarded.ok(List.of())));
-        assertEquals(200, status(resource.messages("chat-1", null, null, "u", "n", "r", "e")));
+        assertEquals(200, status(resource.messages("chat-1", null, null, false, "u", "n", "r", "e")));
     }
 
     @Test
