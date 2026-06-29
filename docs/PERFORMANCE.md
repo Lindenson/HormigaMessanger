@@ -113,11 +113,24 @@ xychart-beta
 ### "Why does it show 25–33 GB?"
 
 Process monitors (the **VIRT** column in `top`/`htop`) show the JVM reserving tens of gigabytes of
-*virtual address space*. That is reservation, not use. On a 32-core host the JVM and glibc pre-reserve
-G1 heap regions, a stack per WebSocket thread, memory-mapped jars, and up to `8 × cores` 64 MB malloc
-arenas. Only **RSS** costs real memory, and RSS stayed **~0.3 GB idle and ~0.9 GB under full
-600-client load**. To keep the number sane, the container sets **`MALLOC_ARENA_MAX=2`**, which alone
-dropped idle VIRT from ~24 GB to ~18 GB and roughly halved RSS, with no measurable throughput cost.
+*virtual address space* by default — reservation, not use (G1 heap-max region, direct buffers, metaspace,
+code cache, a stack per thread, mmap'd jars, and up to `8 × cores` 64 MB glibc malloc arenas). Only
+**RSS** costs real memory.
+
+The deployment **bounds the reservation** with `MALLOC_ARENA_MAX=2` plus
+`-Xmx2g -XX:MaxDirectMemorySize=1g -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=256m`
+(`docker-compose.yml`). Measured at **3,000 msg/s (300 chat pairs)**:
+
+| | default | bounded |
+|--|--|--|
+| VIRT | ~24–33 GB | **~3.4 GB** |
+| RSS (under load) | ~2 GB | **~0.8 GB** |
+| heap-used peak | — | ~0.36 GB (of 2 GB) |
+| old-gen | plateaus | ~45 MB, flat — no leak |
+| GC | — | 94 young pauses / 0.26 s, **zero full GC** |
+| throughput / p95 | 3,000 / 20 ms | **3,000 / 20 ms — no cost** |
+
+Raise `-Xmx` if a longer soak shows heap pressure (peak heap-used was ~0.36 GB, so 2 GB is ample).
 
 ## Hardening for connection churn
 

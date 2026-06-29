@@ -28,8 +28,13 @@ services:
       QUARKUS_PROFILE: prod
       # Cap glibc malloc arenas (default 8×cores). On a many-core host this collapses tens of GB of
       # reserved VIRTUAL address space (a reservation, not RAM) and trims RSS a little, with negligible
-      # throughput impact. The real footprint stays ~2 GB under load — see docs/PERFORMANCE.md.
+      # throughput impact.
       MALLOC_ARENA_MAX: "2"
+      # Bound the JVM's reserved address space. Without these the JVM reserves ~24–33 GB of VIRT (heap
+      # max region + direct buffers + metaspace + code cache). With them, measured VIRT stays ~3.4 GB
+      # and RSS ~0.8 GB at 3,000 msg/s (300 chat pairs), zero full GC, no throughput cost — see
+      # docs/PERFORMANCE.md. Raise -Xmx if a soak shows heap pressure (peak heap-used was ~0.36 GB).
+      JAVA_OPTS_APPEND: "-Xmx2g -XX:MaxDirectMemorySize=1g -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=256m"
       # ── PostgreSQL (history + outbox + conversation + attachment + dead_letter) ──
       DB_HOST: postgres
       DB_PORT: "5432"
