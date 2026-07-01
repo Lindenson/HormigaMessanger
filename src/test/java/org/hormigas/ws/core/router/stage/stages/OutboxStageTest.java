@@ -5,7 +5,7 @@ import org.hormigas.ws.core.router.PipelineResolver.PipelineType;
 import org.hormigas.ws.core.router.context.RouterContext;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.domain.stage.StageResult;
-import org.hormigas.ws.core.router.persist.InboundPersistBatcher;
+import org.hormigas.ws.core.batch.InboundPersistBatcher;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

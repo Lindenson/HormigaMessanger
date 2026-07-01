@@ -10,7 +10,7 @@ import org.hormigas.ws.core.router.stage.PipelineStage;
 import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.ports.channel.DeliveryChannel;
-import org.hormigas.ws.core.router.persist.ReadStatusBatcher;
+import org.hormigas.ws.core.batch.ReadStatusBatcher;
 
 import static org.hormigas.ws.domain.message.MessageType.READ_OUT;
 

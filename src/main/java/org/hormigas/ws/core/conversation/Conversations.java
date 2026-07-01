@@ -3,7 +3,7 @@ package org.hormigas.ws.core.conversation;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.hormigas.ws.core.router.persist.ReadStatusBatcher;
+import org.hormigas.ws.core.batch.ReadStatusBatcher;
 import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.domain.conversation.CreateResult;
 import org.hormigas.ws.domain.conversation.Guarded;

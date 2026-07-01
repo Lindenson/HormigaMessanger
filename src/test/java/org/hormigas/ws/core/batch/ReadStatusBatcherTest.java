@@ -1,4 +1,4 @@
-package org.hormigas.ws.core.router.persist;
+package org.hormigas.ws.core.batch;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
