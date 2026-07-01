@@ -13,4 +13,8 @@ public interface DeadLetterConfig {
     /** Confirmed-set drain page size per sweep. ↑ retracts drafts faster, heavier Redis/DB per tick; ↓ gentler. */
     @WithDefault("500")
     int cleanupBatch();
+
+    /** Retract-sweep cadence — Duration string. Also read by {@code @Scheduled(every=...)}. */
+    @WithDefault("30s")
+    String cleanupEvery();
 }

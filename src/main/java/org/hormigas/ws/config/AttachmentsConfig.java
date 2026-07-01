@@ -27,4 +27,8 @@ public interface AttachmentsConfig {
     /** Orphan-reclaim page size per cleanup tick. ↑ drains faster, heavier DB/MinIO load per tick; ↓ gentler. */
     @WithDefault("200")
     int cleanupBatch();
+
+    /** Orphan-reclaim sweep cadence — Duration string. Also read by {@code @Scheduled(every=...)}. */
+    @WithDefault("15m")
+    String cleanupEvery();
 }

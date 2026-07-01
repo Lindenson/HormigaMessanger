@@ -21,4 +21,12 @@ public interface SessionConfig {
     /** Max heavy clients kicked per overload sweep. ↑ clears backlog faster (burstier); ↓ smooths the reaper. */
     @WithDefault("100")
     int overloadKickBatch();
+
+    /** Liveness (idle) sweep cadence — Duration string. Also read by {@code @Scheduled(every=...)}. */
+    @WithDefault("15s")
+    String reaperEvery();
+
+    /** Overload (backlog) sweep cadence — Duration string. Also read by {@code @Scheduled(every=...)}. */
+    @WithDefault("20s")
+    String overloadReaperEvery();
 }

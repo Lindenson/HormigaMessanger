@@ -17,4 +17,8 @@ public interface RetentionConfig {
     /** Longer TTL for frozen (contract) messages. Must be ≥ {@link #historyDays()} to be meaningful. */
     @WithDefault("365")
     int frozenDays();
+
+    /** Retention sweep cadence — Duration string. Also read by {@code @Scheduled(every=...)}. */
+    @WithDefault("24h")
+    String every();
 }
