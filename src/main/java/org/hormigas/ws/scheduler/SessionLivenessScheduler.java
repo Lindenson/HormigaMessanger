@@ -3,10 +3,11 @@ package org.hormigas.ws.scheduler;
 import io.quarkus.arc.profile.IfBuildProfile;
 import io.quarkus.scheduler.Scheduled;
 import io.quarkus.websockets.next.WebSocketConnection;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.hormigas.ws.config.SessionConfig;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.domain.session.ClientSession;
 import org.hormigas.ws.ports.session.SessionRegistry;
@@ -31,19 +32,26 @@ import java.util.List;
 @IfBuildProfile("prod")
 public class SessionLivenessScheduler {
 
-    private static final int OVERLOAD_KICK_BATCH = 100;
-
     @Inject
     SessionRegistry<WebSocketConnection> registry;
 
     @Inject
     TetrisMarker<Message> tetrisMarker;
 
-    @ConfigProperty(name = "processing.session.idle-timeout-ms", defaultValue = "35000")
-    long idleTimeoutMs;
+    @Inject
+    SessionConfig config;
 
-    @ConfigProperty(name = "processing.session.max-pending", defaultValue = "1000")
+    // Resolved from config at startup (kept as fields so tests can set them directly).
+    long idleTimeoutMs;
     int maxPending;
+    int overloadKickBatch;
+
+    @PostConstruct
+    void init() {
+        idleTimeoutMs = config.idleTimeoutMs();
+        maxPending = config.maxPending();
+        overloadKickBatch = config.overloadKickBatch();
+    }
 
     @Scheduled(every = "${processing.session.reaper-every:15s}",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
@@ -66,7 +74,7 @@ public class SessionLivenessScheduler {
     @Scheduled(every = "${processing.session.overload-reaper-every:20s}",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void reapOverloaded() {
-        tetrisMarker.findHeavyClients(maxPending, OVERLOAD_KICK_BATCH)
+        tetrisMarker.findHeavyClients(maxPending, overloadKickBatch)
                 .subscribe().with(
                         heavy -> heavy.forEach(this::forceOffline),
                         err -> log.error("Overload reaper failed", err));

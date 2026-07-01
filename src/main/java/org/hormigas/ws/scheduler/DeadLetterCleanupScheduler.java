@@ -22,13 +22,14 @@ import org.hormigas.ws.ports.deadletter.DeliveryConfirmations;
 @IfBuildProfile("prod")
 public class DeadLetterCleanupScheduler {
 
-    private static final int BATCH = 500;
-
     @Inject
     DeliveryConfirmations confirmations;
 
     @Inject
     DeadLetterStore<Message> deadLetter;
+
+    @Inject
+    org.hormigas.ws.config.DeadLetterConfig config;
 
     @Scheduled(every = "${processing.deadletter.cleanup-every:30s}",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
@@ -40,7 +41,7 @@ public class DeadLetterCleanupScheduler {
 
     /** Testable core: delete drafts for confirmed ids, then clear those confirmations. */
     Uni<Integer> cleanup() {
-        return confirmations.peek(BATCH).flatMap(ids -> {
+        return confirmations.peek(config.cleanupBatch()).flatMap(ids -> {
             if (ids.isEmpty()) return Uni.createFrom().item(0);
             return deadLetter.deleteDrafts(ids)
                     .call(() -> confirmations.clear(ids));

@@ -23,9 +23,12 @@ class DeadLetterCleanupSchedulerTest {
     private final DeadLetterStore<Message> deadLetter = mock(DeadLetterStore.class);
 
     private DeadLetterCleanupScheduler scheduler() {
+        org.hormigas.ws.config.DeadLetterConfig cfg = mock(org.hormigas.ws.config.DeadLetterConfig.class);
+        when(cfg.cleanupBatch()).thenReturn(500);
         DeadLetterCleanupScheduler s = new DeadLetterCleanupScheduler();
         s.confirmations = confirmations;
         s.deadLetter = deadLetter;
+        s.config = cfg;
         return s;
     }
 

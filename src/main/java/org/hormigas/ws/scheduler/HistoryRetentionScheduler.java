@@ -6,7 +6,6 @@ import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.hormigas.ws.infrastructure.persistance.postgres.HistoryRepository;
 
 import java.time.Duration;
@@ -29,11 +28,18 @@ public class HistoryRetentionScheduler {
     @Inject
     HistoryRepository history;
 
-    @ConfigProperty(name = "processing.retention.history-days", defaultValue = "90")
-    int historyDays;
+    @Inject
+    org.hormigas.ws.config.RetentionConfig config;
 
-    @ConfigProperty(name = "processing.retention.frozen-days", defaultValue = "365")
+    // Resolved from config at startup (kept as fields so tests can set them directly).
+    int historyDays;
     int frozenDays;
+
+    @jakarta.annotation.PostConstruct
+    void init() {
+        historyDays = config.historyDays();
+        frozenDays = config.frozenDays();
+    }
 
     @Scheduled(every = "${processing.retention.every:24h}",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
