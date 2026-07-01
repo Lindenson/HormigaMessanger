@@ -21,6 +21,7 @@ import java.util.Map;
 @Path("/api/chats/{chatId}/attachments")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@org.hormigas.ws.infrastructure.rest.ratelimit.RateLimit("attachments")
 public class AttachmentResource {
 
     @Inject

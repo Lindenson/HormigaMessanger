@@ -60,6 +60,22 @@
 
 
   processing:
+    # Cross-cutting REST rate limiting (per caller × endpoint-group). Every /api/* endpoint uses
+    # default-limit; a @RateLimit("group")-annotated resource uses its group. Single-instance (in-memory).
+    rate-limit:
+      enabled: true
+      default-limit:
+        permits-per-second: 20
+        burst: 40
+      groups:
+        # attachments are the strictest (presigned-upload provisioning is expensive)
+        attachments:
+          permits-per-second: 1
+          burst: 5
+        # admin console — moderate
+        admin:
+          permits-per-second: 5
+          burst: 15
     messages:
       inbound:
         queue-size: 3000

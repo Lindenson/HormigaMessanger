@@ -301,6 +301,11 @@ syncs only its post-delete messages — pass `includeDeleted=true` to read the d
   Missing/blank identity → WS close / HTTP `401`.
 - **Authorization by conversation membership** — only the two participants may read/write a chat;
   others get `403`. Blacklisted pairs cannot message.
+- **Rate limiting** — every `/api/*` endpoint is rate-limited **per caller** by a token bucket; over
+  the limit → `429`. A `default` limit applies to all; stricter groups are set per endpoint
+  (`processing.rate-limit`) — e.g. **attachments** (presigned-upload provisioning) is the tightest,
+  the **admin** console is moderate. Health/metrics under `/q` are exempt. Single-instance (in-memory);
+  a distributed limiter is a documented future.
 
 ---
 

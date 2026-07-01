@@ -23,6 +23,7 @@ import java.util.List;
  */
 @Path("/api/admin/chats")
 @Produces(MediaType.APPLICATION_JSON)
+@org.hormigas.ws.infrastructure.rest.ratelimit.RateLimit("admin")
 public class AdminChatResource {
 
     @Inject
