@@ -35,6 +35,7 @@ public class InboundPrototype {
         return switch (message.getType()) {
             case CHAT_IN -> CHAT_OUT;
             case SIGNAL_IN -> SIGNAL_OUT;
+            case TYPING_IN -> TYPING_OUT;
             default -> message.getType();
         };
     }

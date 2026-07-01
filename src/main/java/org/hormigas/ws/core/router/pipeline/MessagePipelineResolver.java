@@ -26,6 +26,8 @@ public class MessagePipelineResolver implements PipelineResolver<Message, Messag
         routingMatrix.put(CHAT_OUT, OUTBOUND_CACHED);
         // SIGNAL
         routingMatrix.put(SIGNAL_OUT, OUTBOUND_CACHED);
+        // TYPING (transient, like signaling)
+        routingMatrix.put(TYPING_OUT, OUTBOUND_CACHED);
         // SERVICE
         routingMatrix.put(SERVICE_OUT, OUTBOUND_DIRECT);
         // SYSTEM (Strategy C) — deliver + cache (dedup), NO Tetris mark (stays out of the A watermark)
@@ -36,6 +38,8 @@ public class MessagePipelineResolver implements PipelineResolver<Message, Messag
         routingMatrix.put(CHAT_IN, INBOUND_PERSISTENT);
         // SIGNAL
         routingMatrix.put(SIGNAL_IN, INBOUND_CACHED);
+        // TYPING (transient, Strategy S) — send-guard + live delivery to the peer, never persisted
+        routingMatrix.put(TYPING_IN, INBOUND_CACHED);
         // ACK
         routingMatrix.put(SIGNAL_ACK, ACK_CACHED);
         routingMatrix.put(CHAT_ACK, ACK_PERSISTENT);

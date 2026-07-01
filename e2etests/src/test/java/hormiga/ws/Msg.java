@@ -39,6 +39,12 @@ public final class Msg {
         return n.toString();
     }
 
+    public static String typingIn(String sender, String recip, String conv, String mid) {
+        ObjectNode n = base("TYPING_IN", sender, recip, conv, mid);
+        n.putObject("payload").put("kind", "event").put("body", "typing");
+        return n.toString();
+    }
+
     public static String systemAck(String sender, String conv, String mid, String correlationId) {
         ObjectNode n = base("SYSTEM_ACK", sender, "server", conv, mid);
         n.put("correlationId", correlationId);

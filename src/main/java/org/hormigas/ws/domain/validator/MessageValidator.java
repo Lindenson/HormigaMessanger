@@ -20,9 +20,10 @@ import java.util.List;
  * <ul>
  *     <li>CHAT_IN</li>
  *     <li>SIGNAL_IN</li>
- *     <li>CHAT_ACK</li>
+ *     <li>TYPING_IN</li>
+ *     <li>CHAT_ACK, READ_IN, SYSTEM_ACK</li>
  * </ul>
- * All other message types (CHAT_OUT, SIGNAL_OUT, CHAT_ACK, PRESENT_*, SERVICE_OUT)
+ * All other message types (CHAT_OUT, SIGNAL_OUT, TYPING_OUT, PRESENT_*, SERVICE_OUT)
  * are invalid in inbound direction.
  *
  * <h2>2. Self-messaging is forbidden</h2>
@@ -110,7 +111,7 @@ public class MessageValidator implements Validator<Message> {
         }
 
         switch (msg.getType()) {
-            case CHAT_IN, SIGNAL_IN, CHAT_ACK, READ_IN, SYSTEM_ACK -> {
+            case CHAT_IN, SIGNAL_IN, TYPING_IN, CHAT_ACK, READ_IN, SYSTEM_ACK -> {
                 // allowed
             }
             default -> errors.add("type: unsupported inbound message type: " + msg.getType());

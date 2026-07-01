@@ -33,8 +33,8 @@ class InboundPrototypeTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"CHAT_IN, CHAT_OUT", "SIGNAL_IN, SIGNAL_OUT", "CHAT_ACK, CHAT_ACK", "PRESENT_JOIN, PRESENT_JOIN"})
-    @DisplayName("inbound type is switched to its outbound counterpart (CHAT_IN→CHAT_OUT, SIGNAL_IN→SIGNAL_OUT, else unchanged)")
+    @CsvSource({"CHAT_IN, CHAT_OUT", "SIGNAL_IN, SIGNAL_OUT", "TYPING_IN, TYPING_OUT", "CHAT_ACK, CHAT_ACK", "PRESENT_JOIN, PRESENT_JOIN"})
+    @DisplayName("inbound type is switched to its outbound counterpart (CHAT_IN→CHAT_OUT, SIGNAL_IN→SIGNAL_OUT, TYPING_IN→TYPING_OUT, else unchanged)")
     void switchesType(MessageType in, MessageType expectedOut) {
         when(idGenerator.generateId()).thenReturn(SERVER_ID);
         var ctx = prototype.createOutboundContext(PipelineType.INBOUND_PERSISTENT, inbound(in, "client-msg", "corr"));

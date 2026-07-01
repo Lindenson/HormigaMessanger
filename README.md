@@ -332,6 +332,7 @@ server treats the session's `X-User-Id` as the authenticated sender, and every f
 |--------|---------|
 | `CHAT_IN` | send a chat message (persistent, Strategy A) — membership + blacklist guarded |
 | `SIGNAL_IN` | WebRTC offer/answer/ICE (Strategy S, ephemeral) — same membership guard |
+| `TYPING_IN` | typing indicator (Strategy S, transient) — membership/block guarded, delivered live as `TYPING_OUT`, **never persisted** |
 | `CHAT_ACK` | recipient delivery-ACK: `correlationId`=delivered `messageId`, `ackId`=outbox id → `SENT→DELIVERED` |
 | `READ_IN` | recipient read the conversation → marks `READ` + pushes `READ_OUT` to the sender |
 | `SYSTEM_ACK` | confirm a system notice: `correlationId`=notice `messageId` → retracts the dead-letter draft |
@@ -343,6 +344,7 @@ server treats the session's `X-User-Id` as the authenticated sender, and every f
 | `CHAT_OUT` | a delivered chat message |
 | `CHAT_ACK` | `SENT` receipt back to the sender (`correlationId` = the sent `messageId`) |
 | `SIGNAL_OUT` | a delivered signaling frame |
+| `TYPING_OUT` | peer is typing (transient) |
 | `READ_OUT` | "your messages were read" → the original sender |
 | `PRESENT_INIT` / `PRESENT_JOIN` / `PRESENT_LEAVE` | presence snapshot / peer online / peer offline |
 | `SYSTEM_OUT` | a must-arrive system notice (Strategy C) — confirm with `SYSTEM_ACK` |

@@ -23,6 +23,8 @@ class MessagePipelineResolverTest {
             "SIGNAL_IN,     INBOUND_CACHED",
             "SIGNAL_OUT,    OUTBOUND_CACHED",
             "SIGNAL_ACK,    ACK_CACHED",
+            "TYPING_IN,     INBOUND_CACHED",
+            "TYPING_OUT,    OUTBOUND_CACHED",
             "SERVICE_OUT,   OUTBOUND_DIRECT",
             "PRESENT_INIT,  INBOUND_DIRECT",
             "PRESENT_JOIN,  INBOUND_DIRECT",

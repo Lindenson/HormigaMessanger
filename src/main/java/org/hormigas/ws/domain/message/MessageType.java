@@ -14,6 +14,11 @@ public enum MessageType {
     READ_IN,
     READ_OUT,
 
+    // Typing indicator (transient, Strategy S — like signaling): client → server "I'm typing"
+    // (TYPING_IN), delivered live to the peer as TYPING_OUT. Membership/block-guarded, NEVER persisted.
+    TYPING_IN,
+    TYPING_OUT,
+
     PRESENT_INIT,
     PRESENT_JOIN,
     PRESENT_LEAVE,
