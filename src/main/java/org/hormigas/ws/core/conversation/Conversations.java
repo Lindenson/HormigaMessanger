@@ -3,6 +3,7 @@ package org.hormigas.ws.core.conversation;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.hormigas.ws.core.router.persist.ReadStatusBatcher;
 import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.domain.conversation.CreateResult;
 import org.hormigas.ws.domain.conversation.Guarded;
@@ -53,7 +54,7 @@ public class Conversations implements Chats {
     ReadReceipts receipts;
 
     @Inject
-    org.hormigas.ws.core.router.persist.ReadStatusBatcher readStatus;
+    ReadStatusBatcher readStatus;
 
     /** Default history page size when the caller doesn't specify one. */
     public static final int DEFAULT_HISTORY_LIMIT = 200;
