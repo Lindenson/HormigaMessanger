@@ -16,6 +16,22 @@ public interface MessengerConfig {
     Idempotent idempotent();
     ConversationCache conversationCache();
     ReadBatch readBatch();
+    StreamRetry streamRetry();
+
+    /**
+     * Re-subscribe backoff shared by the long-lived reactive streams (inbound/outbound publishers and the
+     * group-commit batchers): on a terminal stream failure they retry indefinitely with this exponential
+     * backoff so a transient fault never permanently disables them.
+     */
+    interface StreamRetry {
+        /** Initial re-subscribe delay. */
+        @WithDefault("200")
+        int minBackoffMs();
+
+        /** Max re-subscribe delay (exponential cap). */
+        @WithDefault("5000")
+        int maxBackoffMs();
+    }
 
     interface Inbound {
         int queueSize();

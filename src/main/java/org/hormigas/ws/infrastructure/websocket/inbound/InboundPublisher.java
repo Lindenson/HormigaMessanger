@@ -63,7 +63,9 @@ public class InboundPublisher implements BackpressurePublisher<Message>, ChatMes
                 // F2: a terminal stream error must not permanently disable the publisher — re-subscribe
                 // with backoff (the emitter consumer resets the counter on each (re)subscribe).
                 .onFailure().invoke(f -> Log.error("Incoming publisher stream failed — retrying", f))
-                .onFailure().retry().withBackOff(Duration.ofMillis(200), Duration.ofSeconds(5)).indefinitely()
+                .onFailure().retry().withBackOff(
+                        Duration.ofMillis(messengerConfig.streamRetry().minBackoffMs()),
+                        Duration.ofMillis(messengerConfig.streamRetry().maxBackoffMs())).indefinitely()
                 .subscribe().with(
                         ignored -> Log.debug("Publishing incoming messages!"),
                         failure -> Log.error("Incoming publisher terminated (retries exhausted)", failure)

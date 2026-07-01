@@ -52,6 +52,7 @@ public final class GroupCommitBatcher<I, O> {
 
     GroupCommitBatcher(Function<List<I>, Uni<List<O>>> batchOp, O shedValue,
                        int maxSize, int lingerMs, int concurrency,
+                       int retryMinBackoffMs, int retryMaxBackoffMs,
                        MeterRegistry registry, String metricPrefix) {
         this.batchOp = batchOp;
         this.shedValue = shedValue;
@@ -79,7 +80,8 @@ public final class GroupCommitBatcher<I, O> {
                 }).drop()
                 .onItem().transformToUni(this::flush).merge(concurrency)
                 .onFailure().invoke(f -> Log.errorf(f, "Batch stream failed (%s) — retrying", metricPrefix))
-                .onFailure().retry().withBackOff(Duration.ofMillis(200), Duration.ofSeconds(5)).indefinitely()
+                .onFailure().retry()
+                .withBackOff(Duration.ofMillis(retryMinBackoffMs), Duration.ofMillis(retryMaxBackoffMs)).indefinitely()
                 .subscribe().with(
                         ignored -> { /* per-batch side effects happen in flush */ },
                         failure -> Log.errorf(failure, "Batch stream terminated (%s, retries exhausted)", metricPrefix));

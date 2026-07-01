@@ -17,6 +17,8 @@ class RateLimiterTest {
         when(cfg.enabled()).thenReturn(enabled);
         when(cfg.defaultLimit()).thenReturn(def);
         when(cfg.groups()).thenReturn(groups);
+        when(cfg.bucketCacheMax()).thenReturn(10_000L);
+        when(cfg.bucketIdleMinutes()).thenReturn(10);
         TokenBucketRateLimiter r = new TokenBucketRateLimiter();
         r.config = cfg;
         r.init();

@@ -27,8 +27,8 @@ public class TokenBucketRateLimiter implements RateLimiter {
     @PostConstruct
     void init() {
         buckets = Caffeine.newBuilder()
-                .expireAfterAccess(Duration.ofMinutes(10))
-                .maximumSize(200_000)
+                .expireAfterAccess(Duration.ofMinutes(config.bucketIdleMinutes()))
+                .maximumSize(config.bucketCacheMax())
                 .build();
     }
 

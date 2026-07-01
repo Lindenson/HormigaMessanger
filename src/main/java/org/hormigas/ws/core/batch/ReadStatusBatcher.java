@@ -37,6 +37,7 @@ public class ReadStatusBatcher {
                 .withBatchOp(receipts::markReadBatch)
                 .withShedValue(0)
                 .withMaxSize(cfg.maxSize()).withLingerMs(cfg.lingerMs()).withConcurrency(cfg.maxConcurrentBatches())
+                .withRetryBackoff(config.streamRetry().minBackoffMs(), config.streamRetry().maxBackoffMs())
                 .withMetrics(meterRegistry, "messenger.read.batch")
                 .build();
 

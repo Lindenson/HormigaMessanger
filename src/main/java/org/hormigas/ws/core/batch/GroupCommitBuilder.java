@@ -29,6 +29,8 @@ public final class GroupCommitBuilder<I, O> {
     private int maxSize = 64;
     private int lingerMs = 5;
     private int concurrency = 8;
+    private int retryMinBackoffMs = 200;
+    private int retryMaxBackoffMs = 5000;
     private MeterRegistry registry;
     private String metricPrefix;
 
@@ -66,6 +68,13 @@ public final class GroupCommitBuilder<I, O> {
         return this;
     }
 
+    /** Re-subscribe backoff for a terminal stream failure (indefinite retry). */
+    public GroupCommitBuilder<I, O> withRetryBackoff(int minBackoffMs, int maxBackoffMs) {
+        this.retryMinBackoffMs = minBackoffMs;
+        this.retryMaxBackoffMs = maxBackoffMs;
+        return this;
+    }
+
     /** Metric registry + prefix; the engine registers {@code <prefix>.{flushes,shed,size,flush}}. */
     public GroupCommitBuilder<I, O> withMetrics(MeterRegistry registry, String metricPrefix) {
         this.registry = registry;
@@ -78,6 +87,7 @@ public final class GroupCommitBuilder<I, O> {
         Objects.requireNonNull(shedValue, "shedValue");
         Objects.requireNonNull(registry, "registry");
         Objects.requireNonNull(metricPrefix, "metricPrefix");
-        return new GroupCommitBatcher<>(batchOp, shedValue, maxSize, lingerMs, concurrency, registry, metricPrefix);
+        return new GroupCommitBatcher<>(batchOp, shedValue, maxSize, lingerMs, concurrency,
+                retryMinBackoffMs, retryMaxBackoffMs, registry, metricPrefix);
     }
 }

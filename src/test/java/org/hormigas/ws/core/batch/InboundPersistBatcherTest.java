@@ -41,6 +41,10 @@ class InboundPersistBatcherTest {
         MessengerConfig.Inbound.PersistBatch pb = mock(MessengerConfig.Inbound.PersistBatch.class);
         when(config.inbound()).thenReturn(inbound);
         when(inbound.persistBatch()).thenReturn(pb);
+        MessengerConfig.StreamRetry sr = mock(MessengerConfig.StreamRetry.class);
+        when(sr.minBackoffMs()).thenReturn(200);
+        when(sr.maxBackoffMs()).thenReturn(5000);
+        when(config.streamRetry()).thenReturn(sr);
         when(pb.maxSize()).thenReturn(64);
         when(pb.lingerMs()).thenReturn(5);
         when(pb.maxConcurrentBatches()).thenReturn(4);
@@ -65,6 +69,10 @@ class InboundPersistBatcherTest {
         MessengerConfig.Inbound.PersistBatch pb = mock(MessengerConfig.Inbound.PersistBatch.class);
         when(config.inbound()).thenReturn(inbound);
         when(inbound.persistBatch()).thenReturn(pb);
+        MessengerConfig.StreamRetry sr = mock(MessengerConfig.StreamRetry.class);
+        when(sr.minBackoffMs()).thenReturn(200);
+        when(sr.maxBackoffMs()).thenReturn(5000);
+        when(config.streamRetry()).thenReturn(sr);
         when(pb.maxSize()).thenReturn(maxSize);
         when(pb.lingerMs()).thenReturn(lingerMs);
         when(pb.maxConcurrentBatches()).thenReturn(concurrency);

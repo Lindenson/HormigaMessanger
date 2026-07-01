@@ -50,6 +50,7 @@ public class InboundPersistBatcher {
                 .withBatchOp(this::persist)
                 .withShedValue(StageResult.failed())
                 .withMaxSize(cfg.maxSize()).withLingerMs(cfg.lingerMs()).withConcurrency(cfg.maxConcurrentBatches())
+                .withRetryBackoff(config.streamRetry().minBackoffMs(), config.streamRetry().maxBackoffMs())
                 .withMetrics(meterRegistry, "messenger.persist.batch")
                 .build();
 

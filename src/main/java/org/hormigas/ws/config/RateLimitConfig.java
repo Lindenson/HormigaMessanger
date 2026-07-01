@@ -17,6 +17,15 @@ public interface RateLimitConfig {
     @WithDefault("true")
     boolean enabled();
 
+    /** Max distinct (group, caller) buckets held in memory. Caps the unbounded-caller footprint; ↑ if you
+     *  have many concurrent callers, ↓ to bound memory. Idle buckets are evicted after {@link #bucketIdleMinutes()}. */
+    @WithDefault("200000")
+    long bucketCacheMax();
+
+    /** Idle time after which a caller's bucket is evicted (its state resets). ↑ preserves limits longer; ↓ frees memory sooner. */
+    @WithDefault("10")
+    int bucketIdleMinutes();
+
     /** Applied to any endpoint without a {@code @RateLimit} group. */
     Limit defaultLimit();
 

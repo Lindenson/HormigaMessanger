@@ -61,7 +61,9 @@ public class RoutingBackpressurePublisher implements BackpressurePublisher<Messa
                 // F2: re-subscribe with backoff on a terminal stream error (emitter consumer resets the
                 // counter on each (re)subscribe) — a single fault must not kill delivery for the JVM.
                 .onFailure().invoke(f -> Log.error("Outbound publisher stream failed — retrying", f))
-                .onFailure().retry().withBackOff(java.time.Duration.ofMillis(200), java.time.Duration.ofSeconds(5)).indefinitely()
+                .onFailure().retry().withBackOff(
+                        java.time.Duration.ofMillis(messengerConfig.streamRetry().minBackoffMs()),
+                        java.time.Duration.ofMillis(messengerConfig.streamRetry().maxBackoffMs())).indefinitely()
                 .subscribe().with(
                         ignored -> Log.debug("Publishing messages!"),
                         failure -> Log.error("Processor terminated (retries exhausted)", failure)

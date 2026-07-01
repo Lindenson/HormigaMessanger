@@ -32,6 +32,10 @@ class ReadStatusBatcherTest {
         when(rb.maxSize()).thenReturn(maxSize);
         when(rb.lingerMs()).thenReturn(lingerMs);
         when(rb.maxConcurrentBatches()).thenReturn(concurrency);
+        MessengerConfig.StreamRetry sr = mock(MessengerConfig.StreamRetry.class);
+        when(sr.minBackoffMs()).thenReturn(200);
+        when(sr.maxBackoffMs()).thenReturn(5000);
+        when(config.streamRetry()).thenReturn(sr);
         ReadStatusBatcher b = new ReadStatusBatcher();
         b.receipts = receipts;
         b.config = config;
