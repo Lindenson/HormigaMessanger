@@ -6,7 +6,7 @@ import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.hormigas.ws.config.AttachmentsConfig;
 import org.hormigas.ws.domain.attachment.Attachment;
 import org.hormigas.ws.ports.attachment.AttachmentManager;
 import org.hormigas.ws.ports.storage.ObjectStorage;
@@ -26,21 +26,19 @@ import java.util.List;
 @IfBuildProfile("prod")
 public class AttachmentCleanupScheduler {
 
-    private static final int BATCH = 200;
-
     @Inject
     AttachmentManager attachments;
 
     @Inject
     ObjectStorage storage;
 
-    @ConfigProperty(name = "processing.attachments.orphan-age-seconds", defaultValue = "3600")
-    long orphanAgeSeconds;
+    @Inject
+    AttachmentsConfig config;
 
     @Scheduled(every = "${processing.attachments.cleanup-every:15m}",
             concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     public void reclaim() {
-        Instant cutoff = Instant.now().minus(Duration.ofSeconds(orphanAgeSeconds));
+        Instant cutoff = Instant.now().minus(Duration.ofSeconds(config.orphanAgeSeconds()));
         reclaim(cutoff)
                 .subscribe().with(
                         n -> { if (n > 0) log.info("Reclaimed {} orphaned attachment(s)", n); },
@@ -49,7 +47,7 @@ public class AttachmentCleanupScheduler {
 
     /** Testable core: reclaim PENDING attachments older than {@code cutoff}; returns the count reclaimed. */
     Uni<Integer> reclaim(Instant cutoff) {
-        return attachments.findStalePending(cutoff, BATCH)
+        return attachments.findStalePending(cutoff, config.cleanupBatch())
                 .flatMap(stale -> {
                     if (stale.isEmpty()) return Uni.createFrom().item(0);
                     List<Uni<Void>> ops = stale.stream().map(this::reclaimOne).toList();

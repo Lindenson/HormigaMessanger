@@ -1,10 +1,12 @@
 package org.hormigas.ws.core.attachment;
 
 import io.smallrye.mutiny.Uni;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.hormigas.ws.config.AttachmentsConfig;
+import org.hormigas.ws.config.MinioConfig;
 import org.hormigas.ws.core.conversation.Conversations;
 import org.hormigas.ws.domain.attachment.*;
 import org.hormigas.ws.domain.attachment.Attachment.AttachmentStatus;
@@ -61,18 +63,25 @@ public class Attachments implements Uploads {
     @Inject
     IdGenerator idGenerator;
 
-    @ConfigProperty(name = "processing.attachments.max-size-bytes", defaultValue = "26214400")
+    @Inject
+    AttachmentsConfig attachmentsConfig;
+
+    @Inject
+    MinioConfig minioConfig;
+
+    // Resolved from config at startup (kept as fields so tests can set them directly).
     long maxSizeBytes;
-
-    /** Allowed content-types (exact or a "type/*" wildcard). Absent/empty = allow all. */
-    @ConfigProperty(name = "processing.attachments.allowed-content-types")
-    java.util.Optional<java.util.List<String>> allowedContentTypes;
-
-    @ConfigProperty(name = "minio.upload-ttl-seconds", defaultValue = "600")
+    java.util.Optional<java.util.List<String>> allowedContentTypes = java.util.Optional.empty();
     int uploadTtlSeconds;
-
-    @ConfigProperty(name = "minio.download-ttl-seconds", defaultValue = "300")
     int downloadTtlSeconds;
+
+    @PostConstruct
+    void init() {
+        maxSizeBytes = attachmentsConfig.maxSizeBytes();
+        allowedContentTypes = attachmentsConfig.allowedContentTypes();
+        uploadTtlSeconds = minioConfig.uploadTtlSeconds();
+        downloadTtlSeconds = minioConfig.downloadTtlSeconds();
+    }
 
     // Result/value types (UploadStatus, UploadTicket, UploadResult, ConfirmResult, DownloadResult)
     // are domain types (domain.attachment); the Uploads port references them — the core never leaks

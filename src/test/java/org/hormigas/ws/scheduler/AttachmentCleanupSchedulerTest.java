@@ -3,6 +3,7 @@ package org.hormigas.ws.scheduler;
 import io.smallrye.mutiny.Uni;
 import org.hormigas.ws.domain.attachment.Attachment;
 import org.hormigas.ws.domain.attachment.Attachment.AttachmentStatus;
+import org.hormigas.ws.config.AttachmentsConfig;
 import org.hormigas.ws.ports.attachment.AttachmentManager;
 import org.hormigas.ws.ports.storage.ObjectStorage;
 import org.junit.jupiter.api.DisplayName;
@@ -22,10 +23,13 @@ class AttachmentCleanupSchedulerTest {
     private final ObjectStorage storage = mock(ObjectStorage.class);
 
     private AttachmentCleanupScheduler scheduler() {
+        AttachmentsConfig cfg = mock(AttachmentsConfig.class);
+        when(cfg.orphanAgeSeconds()).thenReturn(3600L);
+        when(cfg.cleanupBatch()).thenReturn(200);
         AttachmentCleanupScheduler s = new AttachmentCleanupScheduler();
         s.attachments = repo;
         s.storage = storage;
-        s.orphanAgeSeconds = 3600;
+        s.config = cfg;
         return s;
     }
 

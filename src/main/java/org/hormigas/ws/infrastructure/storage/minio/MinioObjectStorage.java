@@ -11,10 +11,11 @@ import io.minio.http.Method;
 import io.smallrye.mutiny.Uni;
 import org.hormigas.ws.domain.storage.PresignedUrl;
 import io.smallrye.mutiny.infrastructure.Infrastructure;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.hormigas.ws.config.MinioConfig;
 import org.hormigas.ws.ports.storage.ObjectStorage;
 
 import java.time.Instant;
@@ -34,10 +35,17 @@ public class MinioObjectStorage implements ObjectStorage {
     @Inject
     MinioClient client;
 
-    @ConfigProperty(name = "minio.bucket", defaultValue = "messenger-attachments")
+    @Inject
+    MinioConfig config;
+
     String bucket;
 
     private final AtomicBoolean bucketReady = new AtomicBoolean(false);
+
+    @PostConstruct
+    void init() {
+        bucket = config.bucket();
+    }
 
     @Override
     public Uni<PresignedUrl> presignPut(String objectKey, String contentType, int ttlSeconds) {

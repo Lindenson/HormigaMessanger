@@ -3,7 +3,8 @@ package org.hormigas.ws.infrastructure.storage.minio;
 import io.minio.MinioClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
+import jakarta.inject.Inject;
+import org.hormigas.ws.config.MinioConfig;
 
 /**
  * Produces the MinIO client from config. The endpoint is the URL the service signs against, so it
@@ -14,21 +15,15 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 @ApplicationScoped
 public class MinioClientProducer {
 
-    @ConfigProperty(name = "minio.endpoint", defaultValue = "http://localhost:9000")
-    String endpoint;
-
-    @ConfigProperty(name = "minio.access-key", defaultValue = "hormiga")
-    String accessKey;
-
-    @ConfigProperty(name = "minio.secret-key", defaultValue = "hormiga123")
-    String secretKey;
+    @Inject
+    MinioConfig config;
 
     @Produces
     @ApplicationScoped
     public MinioClient minioClient() {
         return MinioClient.builder()
-                .endpoint(endpoint)
-                .credentials(accessKey, secretKey)
+                .endpoint(config.endpoint())
+                .credentials(config.accessKey(), config.secretKey())
                 .build();
     }
 }
