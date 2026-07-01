@@ -246,6 +246,21 @@ class HexagonalArchitectureTest {
                 .check(classes);
     }
 
+    @Test
+    void transport_slices_do_not_depend_on_each_other() {
+        // A REST adapter must not reach into the WebSocket slice (or vice versa) — cross-transport
+        // coupling. A server-originated message (e.g. attachment-confirm) routes through the pipeline
+        // via the `ChatMessageEmitter` port, not by injecting the concrete WS `InboundPublisher`.
+        noClasses().that().resideInAPackage("org.hormigas.ws.infrastructure.rest..")
+                .should().dependOnClassesThat().resideInAPackage("org.hormigas.ws.infrastructure.websocket..")
+                .because("transport slices are independent adapters; cross-slice emission goes through a core port")
+                .check(classes);
+        noClasses().that().resideInAPackage("org.hormigas.ws.infrastructure.websocket..")
+                .should().dependOnClassesThat().resideInAPackage("org.hormigas.ws.infrastructure.rest..")
+                .because("transport slices are independent adapters")
+                .check(classes);
+    }
+
     // ─────────────────────────── Validation (§5) ───────────────────────────
 
     @Test

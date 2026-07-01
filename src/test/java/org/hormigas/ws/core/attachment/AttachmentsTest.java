@@ -13,8 +13,10 @@ import org.hormigas.ws.domain.generator.IdGenerator;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.domain.message.MessageType;
 import org.hormigas.ws.ports.attachment.AttachmentManager;
+import org.hormigas.ws.ports.emit.ChatMessageEmitter;
 import org.hormigas.ws.ports.storage.ObjectStorage;
 import org.hormigas.ws.domain.storage.PresignedUrl;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,7 @@ class AttachmentsTest {
     private final AttachmentManager repo = mock(AttachmentManager.class);
     private final ObjectStorage storage = mock(ObjectStorage.class);
     private final Conversations conversations = mock(Conversations.class);
+    private final ChatMessageEmitter emitter = mock(ChatMessageEmitter.class);
     private final IdGenerator idGen = mock(IdGenerator.class);
 
     private Attachments svc;
@@ -45,6 +48,7 @@ class AttachmentsTest {
         svc.attachments = repo;
         svc.storage = storage;
         svc.conversations = conversations;
+        svc.emitter = emitter;
         svc.idGenerator = idGen;
         svc.maxSizeBytes = 1000;
         svc.uploadTtlSeconds = 600;
@@ -112,11 +116,15 @@ class AttachmentsTest {
         when(storage.exists("conv1/att1")).thenReturn(Uni.createFrom().item(true));
         when(repo.markConfirmed(eq("att1"), any())).thenReturn(Uni.createFrom().item(pending()));
         when(conversations.findById("conv1")).thenReturn(Uni.createFrom().item(CONV));
+        when(emitter.emit(any())).thenReturn(true);
 
         ConfirmResult r = svc.confirmUpload("att1", "client1").await().indefinitely();
 
         assertThat(r.status()).isEqualTo(UploadStatus.OK);
-        Message m = r.message();
+        // the core emitted the attachment message into the pipeline (not returned to the adapter)
+        ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
+        verify(emitter).emit(captor.capture());
+        Message m = captor.getValue();
         assertThat(m.getType()).isEqualTo(MessageType.CHAT_IN);
         assertThat(m.getSenderId()).isEqualTo("client1");
         assertThat(m.getRecipientId()).isEqualTo("master1");           // the other participant
@@ -124,6 +132,19 @@ class AttachmentsTest {
         assertThat(m.getPayload().getKind()).isEqualTo(Attachments.KIND_ATTACHMENT);
         assertThat(m.getMeta()).containsEntry(Attachments.META_OBJECT_KEY, "conv1/att1");
         assertThat(m.getMeta()).containsEntry(Attachments.META_ATTACHMENT_ID, "att1");
+    }
+
+    @Test
+    @DisplayName("confirmed but ingress overloaded → OVERLOADED (client retries the confirm)")
+    void confirmOverloaded() {
+        when(repo.findById("att1")).thenReturn(Uni.createFrom().item(pending()));
+        when(storage.exists("conv1/att1")).thenReturn(Uni.createFrom().item(true));
+        when(repo.markConfirmed(eq("att1"), any())).thenReturn(Uni.createFrom().item(pending()));
+        when(conversations.findById("conv1")).thenReturn(Uni.createFrom().item(CONV));
+        when(emitter.emit(any())).thenReturn(false); // ingress full
+
+        ConfirmResult r = svc.confirmUpload("att1", "client1").await().indefinitely();
+        assertThat(r.status()).isEqualTo(UploadStatus.OVERLOADED);
     }
 
     @Test
@@ -144,7 +165,7 @@ class AttachmentsTest {
         when(repo.findById("att1")).thenReturn(Uni.createFrom().item(confirmed));
         ConfirmResult r = svc.confirmUpload("att1", "client1").await().indefinitely();
         assertThat(r.status()).isEqualTo(UploadStatus.ALREADY_CONFIRMED);
-        assertThat(r.message()).isNull();
+        verify(emitter, never()).emit(any());
         verify(storage, never()).exists(any());
     }
 

@@ -13,6 +13,7 @@ import org.hormigas.ws.core.backpressure.BackpressurePublisher;
 import org.hormigas.ws.config.MessengerConfig;
 import org.hormigas.ws.core.router.InboundRouter;
 import org.hormigas.ws.domain.message.Message;
+import org.hormigas.ws.ports.emit.ChatMessageEmitter;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -25,7 +26,7 @@ import static org.hormigas.ws.core.backpressure.BackpressureBuilder.PublisherKin
 
 @Slf4j
 @ApplicationScoped
-public class InboundPublisher implements BackpressurePublisher<Message> {
+public class InboundPublisher implements BackpressurePublisher<Message>, ChatMessageEmitter {
 
 
     @Inject
@@ -84,6 +85,12 @@ public class InboundPublisher implements BackpressurePublisher<Message> {
         Log.debug("Incoming message was published");
         emitter.get().emit(msg);
         return true;
+    }
+
+    /** {@link ChatMessageEmitter}: route a server-originated message through the same inbound pipeline. */
+    @Override
+    public boolean emit(Message message) {
+        return publish(message);
     }
 
     @Override

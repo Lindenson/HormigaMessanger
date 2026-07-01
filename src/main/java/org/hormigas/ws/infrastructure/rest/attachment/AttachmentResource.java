@@ -9,15 +9,14 @@ import org.hormigas.ws.core.attachment.Uploads;
 import org.hormigas.ws.domain.attachment.ConfirmResult;
 import org.hormigas.ws.infrastructure.rest.history.security.TokenVerifier;
 import org.hormigas.ws.infrastructure.security.IdentityHeaders;
-import org.hormigas.ws.infrastructure.websocket.inbound.InboundPublisher;
 
 import java.util.Map;
 
 /**
- * REST adapter for two-phase presigned-upload attachments (concept §10, ADR-010). All endpoints
- * require Ory identity headers; authorization is by conversation membership (enforced in the core
- * service). On confirm, the emitted persistent message is published into the SAME inbound pipeline
- * a WS chat message uses, so it is persisted, delivered live, and GC'd uniformly.
+ * REST adapter for two-phase presigned-upload attachments (concept §10, ADR-010). All endpoints require
+ * Ory identity headers; authorization and the on-confirm message emission live in the core use case
+ * ({@code Uploads}) — this adapter only maps request → use case → HTTP. On confirm the core emits the
+ * persistent message into the SAME inbound pipeline a WS chat message uses (via the emitter port).
  */
 @Path("/api/chats/{chatId}/attachments")
 @Produces(MediaType.APPLICATION_JSON)
@@ -29,9 +28,6 @@ public class AttachmentResource {
 
     @Inject
     TokenVerifier auth;
-
-    @Inject
-    InboundPublisher inboundPublisher;
 
     public record UploadUrlRequest(String fileName, String contentType, Long sizeBytes) {}
 
@@ -103,16 +99,11 @@ public class AttachmentResource {
 
     private Response toConfirmResponse(ConfirmResult r) {
         return switch (r.status()) {
-            case OK -> {
-                // Feed the attachment message into the same pipeline as a WS chat message.
-                if (inboundPublisher.publish(r.message())) {
-                    yield Response.status(Response.Status.ACCEPTED)
-                            .entity(Map.of("status", "published")).build();
-                }
-                // Ingress overloaded — confirmed in DB, but tell the client to retry the publish.
-                yield Response.status(Response.Status.SERVICE_UNAVAILABLE)
-                        .entity(Map.of("status", "overloaded")).build();
-            }
+            // Core already emitted the message into the pipeline.
+            case OK -> Response.status(Response.Status.ACCEPTED).entity(Map.of("status", "published")).build();
+            // Confirmed, but the ingress was full — client should retry the confirm.
+            case OVERLOADED -> Response.status(Response.Status.SERVICE_UNAVAILABLE)
+                    .entity(Map.of("status", "overloaded")).build();
             case ALREADY_CONFIRMED -> Response.ok(Map.of("status", "already-confirmed")).build();
             case NOT_UPLOADED -> Response.status(Response.Status.CONFLICT)
                     .entity(Map.of("status", "not-uploaded")).build();

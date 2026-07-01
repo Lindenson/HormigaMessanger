@@ -13,6 +13,7 @@ import org.hormigas.ws.domain.generator.IdGenerator;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.domain.message.MessageType;
 import org.hormigas.ws.ports.attachment.AttachmentManager;
+import org.hormigas.ws.ports.emit.ChatMessageEmitter;
 import org.hormigas.ws.ports.storage.ObjectStorage;
 
 import java.time.Instant;
@@ -53,6 +54,9 @@ public class Attachments implements Uploads {
 
     @Inject
     Conversations conversations;
+
+    @Inject
+    ChatMessageEmitter emitter;
 
     @Inject
     IdGenerator idGenerator;
@@ -112,7 +116,10 @@ public class Attachments implements Uploads {
                         .replaceWith(conversations.findById(att.conversationId()))
                         .map(conv -> {
                             if (conv == null) return ConfirmResult.of(UploadStatus.NOT_FOUND);
-                            return new ConfirmResult(UploadStatus.OK, toMessage(att, conv));
+                            // Emit through the router (the single message pipeline) — same as a WS chat
+                            // message: persisted, delivered live, GC'd uniformly. false = ingress overloaded.
+                            boolean emitted = emitter.emit(toMessage(att, conv));
+                            return ConfirmResult.of(emitted ? UploadStatus.OK : UploadStatus.OVERLOADED);
                         });
             });
         });

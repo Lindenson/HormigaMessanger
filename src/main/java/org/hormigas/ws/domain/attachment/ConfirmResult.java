@@ -1,8 +1,12 @@
 package org.hormigas.ws.domain.attachment;
 
-import org.hormigas.ws.domain.message.Message;
-
-/** Result of {@code confirmUpload}: on OK, {@code message} must be published into the delivery pipeline. */
-public record ConfirmResult(UploadStatus status, Message message) {
-    public static ConfirmResult of(UploadStatus s) { return new ConfirmResult(s, null); }
+/**
+ * Result of {@code confirmUpload}: just the outcome. On {@code OK} the core has already emitted the
+ * attachment message into the delivery pipeline (via the {@code ChatMessageEmitter} port); on
+ * {@code OVERLOADED} it was confirmed but the ingress was full. The REST adapter only maps status → HTTP.
+ */
+public record ConfirmResult(UploadStatus status) {
+    public static ConfirmResult of(UploadStatus s) {
+        return new ConfirmResult(s);
+    }
 }
