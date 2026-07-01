@@ -229,6 +229,23 @@ class HexagonalArchitectureTest {
                 .check(classes);
     }
 
+    // ─────────────────────────── The router is the single message pipeline ───────────────────────────
+
+    @Test
+    void message_delivery_flows_only_through_the_router() {
+        // The router is the one crossroads and pipeline for every message: ingress publishes into it,
+        // and client delivery happens ONLY inside the pipeline (DeliveryStage / ReadStage). No adapter
+        // and no other core code may deliver a message to a client directly — it must route.
+        // (Sole documented transport-level exception: WebsocketService.notifyOverloaded, the ingress-
+        // reject signal fired when the router's own queue is full — it cannot use the saturated pipeline;
+        // it writes the raw socket, not DeliveryChannel, so it is not caught here.)
+        noClasses().that().resideOutsideOfPackage("org.hormigas.ws.core.router..")
+                .should(callMethod(org.hormigas.ws.ports.channel.DeliveryChannel.class, "deliver", Object.class))
+                .because("the router is the single pipeline for all messages — delivery goes through the "
+                        + "pipeline stages, never straight from an adapter or other core code")
+                .check(classes);
+    }
+
     // ─────────────────────────── Validation (§5) ───────────────────────────
 
     @Test

@@ -141,10 +141,21 @@ WebSocket frame
 ```
 
 **Rules:**
-- All routing and message handling go **through the publisher → pipeline**, keyed by `MessageType`
-  in `MessagePipelineResolver`. **Every** inbound type is handled by a pipeline (e.g. `CHAT_ACK →
-  ACK_PERSISTENT`). A new inbound type (e.g. `READ_IN`, `SYSTEM_ACK`) gets a `PipelineType` + a stage —
-  it is **not** handled inline in the WS adapter.
+- **The router is the single crossroads and pipeline for every message — the only one.** All routing
+  and message handling go **through the publisher → pipeline**, keyed by `MessageType` in
+  `MessagePipelineResolver`. **Every** inbound type is handled by a pipeline (e.g. `CHAT_ACK →
+  ACK_PERSISTENT`). A new inbound type (e.g. `READ_IN`, `SYSTEM_ACK`, `TYPING_IN`) gets a `PipelineType`
+  + a stage — it is **not** handled inline in the WS adapter. Corollaries:
+  - **Delivery to a client happens only inside the pipeline** (`DeliveryStage` / `ReadStage`). No
+    adapter and no other core code delivers a message directly. *(Enforced:
+    `message_delivery_flows_only_through_the_router`.)* Sole transport-level exception:
+    `WebsocketService.notifyOverloaded` — the ingress-reject signal fired when the router's own queue is
+    full, which by definition cannot use the saturated pipeline (raw socket write, not `DeliveryChannel`).
+  - **A message that is persisted is written to the database only in batch** (group-commit —
+    `InboundPersistBatcher` for `CHAT_IN`, the read-status batcher for `READ_IN`), never row-by-row on
+    the hot path.
+  - **A transient message (e.g. `TYPING`) still routes** — through the pipeline to live delivery — but
+    is **not persisted** (the `SIGNAL_IN → INBOUND_CACHED` shape: send-guard + cached delivery).
 - A pre-processing concern that must run before publish is a **filter** the adapter depends on
   (the `ChannelFilter` pattern) — not inline business code, and not a DB call in the adapter.
 - The WS adapter may translate transport authentication (e.g. stamp the authenticated sender id from
@@ -187,9 +198,11 @@ of transport/persistence tech (vertx, jax-rs, persistence, kafka, minio, lettuce
 → `infrastructure.websocket` · `@Incoming` → `infrastructure.messaging` · `@Scheduled` → `scheduler`.
 *Adapter purity:* `WebsocketService` ingress is pure transport · `infrastructure` makes no domain
 decisions (`Conversation.hasParticipant`/`isBlocked`).
+*Single message pipeline:* client delivery (`DeliveryChannel.deliver`) is invoked only from
+`core.router..` — the router is the one crossroads for all messages (§4).
 *Validation:* `Validator` implementations reside in `domain`.
 
-### Restoration — DONE (all 18 rules green)
+### Restoration — DONE (all 19 rules green)
 The drift that prompted these rules has been remediated:
 - `MessageValidator` moved back to `domain/validator` (domain may carry CDI scope annotations — §5).
 - Driven-port renames: `*Repository` ports → `*Manager` (`ConversationManager`, `AttachmentManager`);
