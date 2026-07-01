@@ -21,7 +21,7 @@ public class InboundMessageFilter<W> implements ChannelFilter<Message, W> {
             return false;
         }
         if (creditPolicy.test(message) && !clientSession.tryConsumeCredits()) {
-            log.warn("Rate limit exceeded for client {}", clientSession.getClientId());
+            log.warn("Credits exhausted for client {}", clientSession.getClientId());
             return false;
         }
         return true;

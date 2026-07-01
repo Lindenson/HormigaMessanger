@@ -125,8 +125,8 @@
         max-retries: 3
       # Per-connection WS flow control (token bucket) — the built-in anti-DoS / anti-flood guard.
       credits:
-        max-value: 100          # burst allowance per connection
-        refill-rate-per-s: 10   # sustained per-connection send rate; aggregate ceiling ≈ connections × this
+        max-value: 1000         # burst allowance per connection
+        refill-rate-per-s: 100  # sustained per-connection send rate; aggregate ceiling ≈ connections × this
       # Outbox GC (watermark/Tetris) sweep cadence (Duration string).
       collector:
         every-s: "10s"
