@@ -39,6 +39,26 @@ public class ReadReceiptsAdapter implements ReadReceipts {
     }
 
     @Override
+    public Uni<List<Integer>> markReadBatch(List<MarkRead> ops) {
+        if (ops == null || ops.isEmpty()) {
+            return Uni.createFrom().item(List.of());
+        }
+        // All ops in ONE transaction — one commit per batch (mirrors OutboxManager.saveBatch).
+        return client.withTransaction(conn -> {
+            Uni<List<Integer>> chain = Uni.createFrom().item(new ArrayList<>());
+            for (MarkRead op : ops) {
+                chain = chain.flatMap(acc -> conn.preparedQuery("""
+                                UPDATE message_history SET status = 'READ'
+                                 WHERE conversation_id = $1 AND recipient_id = $2 AND status <> 'READ'
+                                """)
+                        .execute(Tuple.of(op.conversationId(), op.readerId()))
+                        .map(r -> { acc.add(r.rowCount()); return acc; }));
+            }
+            return chain;
+        });
+    }
+
+    @Override
     public Uni<List<Receipt>> receipts(String conversationId) {
         return client.preparedQuery(
                         "SELECT message_id, status FROM message_history WHERE conversation_id = $1 ORDER BY created_at ASC")

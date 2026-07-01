@@ -52,6 +52,9 @@ public class Conversations implements Chats {
     @Inject
     ReadReceipts receipts;
 
+    @Inject
+    org.hormigas.ws.core.router.persist.ReadStatusBatcher readStatus;
+
     /** Default history page size when the caller doesn't specify one. */
     public static final int DEFAULT_HISTORY_LIMIT = 200;
     /** Hard cap so a caller cannot request an unbounded page. */
@@ -162,7 +165,7 @@ public class Conversations implements Chats {
 
     /** Mark messages addressed to the caller READ (REST fallback for the READ_IN WS event), guarded. */
     public Uni<Guarded<Integer>> markRead(String chatId, String userId) {
-        return guardedRead(chatId, userId, conv -> receipts.markRead(chatId, userId));
+        return guardedRead(chatId, userId, conv -> readStatus.enqueue(chatId, userId));
     }
 
     /** Per-message status for the chat, membership-guarded. */

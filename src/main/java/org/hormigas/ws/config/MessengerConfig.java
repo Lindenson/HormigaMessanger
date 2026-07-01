@@ -15,6 +15,7 @@ public interface MessengerConfig {
     Storage storage();
     Idempotent idempotent();
     ConversationCache conversationCache();
+    ReadBatch readBatch();
 
     interface Inbound {
         int queueSize();
@@ -88,6 +89,21 @@ public interface MessengerConfig {
 
         @WithDefault("60")
         int ttlSeconds();
+    }
+
+    /**
+     * Group-commit of read-status writes (READ_IN), mirroring the inbound persist batcher: READ receipts
+     * hit the DB only in batches, never row-per-event. Same shape/knobs as {@code inbound.persist-batch}.
+     */
+    interface ReadBatch {
+        @WithDefault("64")
+        int maxSize();
+
+        @WithDefault("10")
+        int lingerMs();
+
+        @WithDefault("4")
+        int maxConcurrentBatches();
     }
 
     interface Idempotent {

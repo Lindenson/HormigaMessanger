@@ -10,7 +10,7 @@ import org.hormigas.ws.core.router.stage.PipelineStage;
 import org.hormigas.ws.domain.conversation.Conversation;
 import org.hormigas.ws.domain.message.Message;
 import org.hormigas.ws.ports.channel.DeliveryChannel;
-import org.hormigas.ws.ports.message.ReadReceipts;
+import org.hormigas.ws.core.router.persist.ReadStatusBatcher;
 
 import static org.hormigas.ws.domain.message.MessageType.READ_OUT;
 
@@ -25,7 +25,7 @@ import static org.hormigas.ws.domain.message.MessageType.READ_OUT;
 public class ReadStage implements PipelineStage<RouterContext<Message>> {
 
     private final Chats chats;
-    private final ReadReceipts receipts;
+    private final ReadStatusBatcher readStatus;
     private final DeliveryChannel<Message> channel;
 
     @Override
@@ -39,7 +39,7 @@ public class ReadStage implements PipelineStage<RouterContext<Message>> {
                         log.warn("READ_IN ignored: conv={} reader={} (missing/not a member)", conversationId, reader);
                         return Uni.createFrom().item(ctx);
                     }
-                    return receipts.markRead(conversationId, reader).flatMap(marked -> marked > 0
+                    return readStatus.enqueue(conversationId, reader).flatMap(marked -> marked > 0
                             ? channel.deliver(readReceiptFor(conv, reader))
                                     .onItem().invoke(ctx::setDelivered).replaceWith(ctx)
                             : Uni.createFrom().item(ctx));

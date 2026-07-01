@@ -21,8 +21,18 @@ public interface ReadReceipts {
     /** Mark all messages addressed to {@code readerId} in the conversation as READ; returns the count newly marked. */
     Uni<Integer> markRead(String conversationId, String readerId);
 
+    /**
+     * Group-commit variant: mark READ for a batch of {@code (conversationId, readerId)} ops in a SINGLE
+     * transaction, returning the newly-marked count per op, in order. Used by the read-status batcher so
+     * READ receipts — like inbound persistence — hit the DB only in batches, never row-per-event.
+     */
+    Uni<List<Integer>> markReadBatch(List<MarkRead> ops);
+
     /** Per-message status for a conversation (oldest-first). */
     Uni<List<Receipt>> receipts(String conversationId);
 
     record Receipt(String messageId, String status) {}
+
+    /** One read-mark operation: everything {@code readerId} received in {@code conversationId}. */
+    record MarkRead(String conversationId, String readerId) {}
 }

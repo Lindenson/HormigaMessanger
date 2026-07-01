@@ -93,6 +93,29 @@ class ReadReceiptsAdapterTest {
     }
 
     @Test
+    void markReadBatch_marks_each_op_in_one_transaction_returning_per_op_counts() {
+        insert("cA", "a1", "master", "client");   // → client
+        insert("cA", "a2", "master", "client");   // → client
+        insert("cB", "b1", "master", "other");    // → other
+        insert("cA", "a3", "client", "master");   // → master (not this reader)
+
+        List<Integer> counts = adapter.markReadBatch(List.of(
+                new org.hormigas.ws.ports.message.ReadReceipts.MarkRead("cA", "client"),
+                new org.hormigas.ws.ports.message.ReadReceipts.MarkRead("cB", "other"),
+                new org.hormigas.ws.ports.message.ReadReceipts.MarkRead("cA", "client") // duplicate → already READ
+        )).await().indefinitely();
+
+        assertEquals(List.of(2, 1, 0), counts, "per-op counts in order; the duplicate marks nothing new");
+        assertEquals("READ", adapter.receipts("cA").await().indefinitely().stream()
+                .filter(r -> r.messageId().equals("a1")).findFirst().orElseThrow().status());
+    }
+
+    @Test
+    void markReadBatch_empty_is_noop() {
+        assertEquals(List.of(), adapter.markReadBatch(List.of()).await().indefinitely());
+    }
+
+    @Test
     void receipts_returns_all_messages_oldest_first() {
         insert("conv", "m1", "master", "client");
         insert("conv", "m2", "client", "master");

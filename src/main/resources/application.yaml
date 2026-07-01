@@ -76,6 +76,12 @@
       conversation-cache:
         max-size: 100000
         ttl-seconds: 60
+      # Group-commit of read-status writes (READ_IN), mirroring persist-batch: READ receipts hit the DB
+      # only in batches. Overflow sheds whole batches gracefully (onOverflow drop) — never stalls.
+      read-batch:
+        max-size: 64
+        linger-ms: 10
+        max-concurrent-batches: 4
       outbound:
         batch-size: 1500
         queue-size: 5000
