@@ -107,20 +107,54 @@ class AttachmentsTest {
         verifyNoInteractions(conversations, repo, storage);
     }
 
+    @Test
+    @DisplayName("missing/zero declared size → TOO_LARGE before any work (size can't be omitted)")
+    void requestUploadSizeRequired() {
+        assertThat(svc.requestUpload("conv1", "client1", "f.png", "image/png", null).await().indefinitely().status())
+                .isEqualTo(UploadStatus.TOO_LARGE);
+        assertThat(svc.requestUpload("conv1", "client1", "f.png", "image/png", 0L).await().indefinitely().status())
+                .isEqualTo(UploadStatus.TOO_LARGE);
+        verifyNoInteractions(conversations, repo, storage);
+    }
+
+    @Test
+    @DisplayName("content-type not in the whitelist → UNSUPPORTED_TYPE")
+    void requestUploadUnsupportedType() {
+        svc.allowedContentTypes = java.util.Optional.of(java.util.List.of("image/*", "application/pdf"));
+        UploadResult r = svc.requestUpload("conv1", "client1", "evil.exe", "application/x-msdownload", 10L)
+                .await().indefinitely();
+        assertThat(r.status()).isEqualTo(UploadStatus.UNSUPPORTED_TYPE);
+        verifyNoInteractions(conversations, repo, storage);
+    }
+
+    @Test
+    @DisplayName("blocked pair → FORBIDDEN, nothing persisted (uploading is sending)")
+    void requestUploadBlocked() {
+        Conversation blocked = new Conversation("conv1", "client1", "master1", Map.of(), true, false,
+                Instant.now(), Instant.now());
+        when(conversations.findById("conv1")).thenReturn(Uni.createFrom().item(blocked));
+        UploadResult r = svc.requestUpload("conv1", "client1", "f.png", "image/png", 10L).await().indefinitely();
+        assertThat(r.status()).isEqualTo(UploadStatus.FORBIDDEN);
+        verify(repo, never()).insertPending(any());
+    }
+
     // ---- confirmUpload -------------------------------------------------------
 
     @Test
-    @DisplayName("uploaded object present → CONFIRMED + CHAT_IN message to the peer, referencing the object")
+    @DisplayName("PENDING + object present & within size → CONFIRMED→emit→DELIVERED; CHAT_IN to the peer")
     void confirmOk() {
         when(repo.findById("att1")).thenReturn(Uni.createFrom().item(pending()));
         when(storage.exists("conv1/att1")).thenReturn(Uni.createFrom().item(true));
+        when(storage.size("conv1/att1")).thenReturn(Uni.createFrom().item(10L)); // within maxSizeBytes=1000
         when(repo.markConfirmed(eq("att1"), any())).thenReturn(Uni.createFrom().item(pending()));
+        when(repo.markDelivered("att1")).thenReturn(Uni.createFrom().voidItem());
         when(conversations.findById("conv1")).thenReturn(Uni.createFrom().item(CONV));
         when(emitter.emit(any())).thenReturn(true);
 
         ConfirmResult r = svc.confirmUpload("att1", "client1").await().indefinitely();
 
         assertThat(r.status()).isEqualTo(UploadStatus.OK);
+        verify(repo).markDelivered("att1"); // flipped CONFIRMED→DELIVERED after a successful emit
         // the core emitted the attachment message into the pipeline (not returned to the adapter)
         ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
         verify(emitter).emit(captor.capture());
@@ -139,12 +173,45 @@ class AttachmentsTest {
     void confirmOverloaded() {
         when(repo.findById("att1")).thenReturn(Uni.createFrom().item(pending()));
         when(storage.exists("conv1/att1")).thenReturn(Uni.createFrom().item(true));
+        when(storage.size("conv1/att1")).thenReturn(Uni.createFrom().item(10L));
         when(repo.markConfirmed(eq("att1"), any())).thenReturn(Uni.createFrom().item(pending()));
         when(conversations.findById("conv1")).thenReturn(Uni.createFrom().item(CONV));
         when(emitter.emit(any())).thenReturn(false); // ingress full
 
         ConfirmResult r = svc.confirmUpload("att1", "client1").await().indefinitely();
         assertThat(r.status()).isEqualTo(UploadStatus.OVERLOADED);
+        // NOT marked delivered — a retried confirm will re-emit (no lost message)
+        verify(repo, never()).markDelivered(any());
+    }
+
+    @Test
+    @DisplayName("actual object larger than the limit → TOO_LARGE, not confirmed (client can't lie about size)")
+    void confirmActualTooLarge() {
+        when(repo.findById("att1")).thenReturn(Uni.createFrom().item(pending()));
+        when(storage.exists("conv1/att1")).thenReturn(Uni.createFrom().item(true));
+        when(storage.size("conv1/att1")).thenReturn(Uni.createFrom().item(9999L)); // > maxSizeBytes=1000
+        ConfirmResult r = svc.confirmUpload("att1", "client1").await().indefinitely();
+        assertThat(r.status()).isEqualTo(UploadStatus.TOO_LARGE);
+        verify(repo, never()).markConfirmed(any(), any());
+        verify(emitter, never()).emit(any());
+    }
+
+    @Test
+    @DisplayName("CONFIRMED-but-not-DELIVERED (prior overload) → re-emits on retry → DELIVERED")
+    void confirmConfirmedReEmits() {
+        Attachment confirmed = new Attachment("att1", "conv1", "client1", "conv1/att1", "f.png", "image/png", 10L,
+                AttachmentStatus.CONFIRMED, Instant.now(), Instant.now());
+        when(repo.findById("att1")).thenReturn(Uni.createFrom().item(confirmed));
+        when(conversations.findById("conv1")).thenReturn(Uni.createFrom().item(CONV));
+        when(emitter.emit(any())).thenReturn(true);
+        when(repo.markDelivered("att1")).thenReturn(Uni.createFrom().voidItem());
+
+        ConfirmResult r = svc.confirmUpload("att1", "client1").await().indefinitely();
+
+        assertThat(r.status()).isEqualTo(UploadStatus.OK);
+        verify(emitter).emit(any());           // the lost message is re-sent
+        verify(repo).markDelivered("att1");
+        verify(storage, never()).exists(any()); // skips the object check — already confirmed
     }
 
     @Test
@@ -158,11 +225,11 @@ class AttachmentsTest {
     }
 
     @Test
-    @DisplayName("re-confirm of a CONFIRMED attachment → idempotent, no second message")
+    @DisplayName("re-confirm of a DELIVERED attachment → idempotent, no second message")
     void confirmAlready() {
-        Attachment confirmed = new Attachment("att1", "conv1", "client1", "conv1/att1", "f.png", "image/png", 10L,
-                AttachmentStatus.CONFIRMED, Instant.now(), Instant.now());
-        when(repo.findById("att1")).thenReturn(Uni.createFrom().item(confirmed));
+        Attachment delivered = new Attachment("att1", "conv1", "client1", "conv1/att1", "f.png", "image/png", 10L,
+                AttachmentStatus.DELIVERED, Instant.now(), Instant.now());
+        when(repo.findById("att1")).thenReturn(Uni.createFrom().item(delivered));
         ConfirmResult r = svc.confirmUpload("att1", "client1").await().indefinitely();
         assertThat(r.status()).isEqualTo(UploadStatus.ALREADY_CONFIRMED);
         verify(emitter, never()).emit(any());

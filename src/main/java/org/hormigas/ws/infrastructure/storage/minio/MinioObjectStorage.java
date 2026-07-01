@@ -84,6 +84,23 @@ public class MinioObjectStorage implements ObjectStorage {
     }
 
     @Override
+    public Uni<Long> size(String objectKey) {
+        return blocking(() -> {
+            try {
+                return client.statObject(StatObjectArgs.builder().bucket(bucket).object(objectKey).build()).size();
+            } catch (ErrorResponseException e) {
+                String code = e.errorResponse() == null ? "" : e.errorResponse().code();
+                if ("NoSuchKey".equals(code) || "NoSuchObject".equals(code)) {
+                    return -1L;
+                }
+                throw new RuntimeException("statObject(size) failed for " + objectKey, e);
+            } catch (Exception e) {
+                throw new RuntimeException("statObject(size) failed for " + objectKey, e);
+            }
+        });
+    }
+
+    @Override
     public Uni<Void> delete(String objectKey) {
         return Uni.createFrom().<Void>item(() -> {
                     try {

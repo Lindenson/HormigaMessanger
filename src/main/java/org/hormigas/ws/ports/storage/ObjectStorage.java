@@ -20,6 +20,10 @@ public interface ObjectStorage {
     /** True iff the object actually exists (used at confirm to reject a never-uploaded key). */
     Uni<Boolean> exists(String objectKey);
 
+    /** Actual stored size in bytes (confirm-time size enforcement against a lying client), or
+     *  {@code -1} if the object is absent/unreadable. */
+    Uni<Long> size(String objectKey);
+
     /** Best-effort delete (orphan cleanup); never fails the caller if the object is already gone. */
     Uni<Void> delete(String objectKey);
 }

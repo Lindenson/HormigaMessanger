@@ -107,9 +107,12 @@
       storage:
         service: redis
     attachments:
-      max-size-bytes: 26214400   # 25 MiB cap on a single upload
+      max-size-bytes: 26214400   # 25 MiB cap on a single upload (declared at request + actual at confirm)
       orphan-age-seconds: 3600   # reclaim a PENDING upload that never confirmed after 1h
       cleanup-every: 15m
+      # Allowed content-types (exact, or a "type/*" wildcard). Absent = allow all. Set a whitelist in
+      # prod to lock down, e.g.:  allowed-content-types: "image/*,application/pdf,text/plain"
+      # (rejected at request with 415).
 
   # Inter-service Kafka integration (ADR-007): consume order.events.
   # NB: the default MUST be a resolvable host. An unresolvable bootstrap host fails Kafka-consumer

@@ -45,6 +45,9 @@ public class AttachmentResource {
         if (req == null || req.fileName() == null || req.fileName().isBlank()) {
             return badRequest("fileName is required");
         }
+        if (req.sizeBytes() == null || req.sizeBytes() <= 0) {
+            return badRequest("sizeBytes is required and must be > 0");
+        }
         return attachments.requestUpload(chatId, caller.get().id(), req.fileName(), req.contentType(), req.sizeBytes())
                 .map(r -> switch (r.status()) {
                     case OK -> Response.status(Response.Status.CREATED).entity(Map.of(
@@ -56,6 +59,7 @@ public class AttachmentResource {
                     case NOT_FOUND -> status(Response.Status.NOT_FOUND);
                     case FORBIDDEN -> status(Response.Status.FORBIDDEN);
                     case TOO_LARGE -> status(Response.Status.REQUEST_ENTITY_TOO_LARGE);
+                    case UNSUPPORTED_TYPE -> status(Response.Status.UNSUPPORTED_MEDIA_TYPE);
                     default -> status(Response.Status.BAD_REQUEST);
                 });
     }

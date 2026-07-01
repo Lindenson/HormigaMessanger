@@ -51,12 +51,21 @@ public class AttachmentPostgresAdapter implements AttachmentManager {
 
     @Override
     public Uni<Attachment> markConfirmed(String id, Instant confirmedAt) {
-        // Idempotent: only PENDING→CONFIRMED flips confirmed_at; an already-CONFIRMED row is returned as-is.
+        // Monotonic: only PENDING→CONFIRMED. Guarded so it can never regress a DELIVERED row back to
+        // CONFIRMED. Returns the updated row (null if the row was not PENDING).
         return client.preparedQuery(
                         "UPDATE attachment SET status = 'CONFIRMED', confirmed_at = COALESCE(confirmed_at, $2) "
-                                + "WHERE id = $1 RETURNING " + COLS)
+                                + "WHERE id = $1 AND status = 'PENDING' RETURNING " + COLS)
                 .execute(Tuple.of(id, odt(confirmedAt)))
                 .map(this::firstOrNull);
+    }
+
+    @Override
+    public Uni<Void> markDelivered(String id) {
+        // Monotonic CONFIRMED→DELIVERED (idempotent; a no-op if not currently CONFIRMED).
+        return client.preparedQuery("UPDATE attachment SET status = 'DELIVERED' WHERE id = $1 AND status = 'CONFIRMED'")
+                .execute(Tuple.of(id))
+                .replaceWithVoid();
     }
 
     @Override
