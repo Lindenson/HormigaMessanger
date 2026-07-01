@@ -86,7 +86,6 @@ public interface MessengerConfig {
     }
 
     interface Collector {
-        int maxWatermarks();
         String everyS();
     }
 

@@ -64,9 +64,11 @@
     # default-limit; a @RateLimit("group")-annotated resource uses its group. Single-instance (in-memory).
     rate-limit:
       enabled: true
+      bucket-cache-max: 200000   # max distinct (group,caller) buckets held; ↑ for many callers, ↓ to bound memory
+      bucket-idle-minutes: 10    # evict a caller's bucket after this idle time (state resets)
       default-limit:
-        permits-per-second: 20
-        burst: 40
+        permits-per-second: 20   # sustained rate for any endpoint without a @RateLimit group
+        burst: 40                # burst allowance (bucket capacity)
       groups:
         # attachments are the strictest (presigned-upload provisioning is expensive)
         attachments:
@@ -77,8 +79,14 @@
           permits-per-second: 5
           burst: 15
     messages:
+      # Re-subscribe backoff shared by the inbound/outbound publishers and the group-commit batchers:
+      # on a terminal stream fault they retry indefinitely with this exponential backoff (transient
+      # fault never permanently disables a stream). ↑ = calmer under repeated faults; ↓ = faster recovery.
+      stream-retry:
+        min-backoff-ms: 200
+        max-backoff-ms: 5000
       inbound:
-        queue-size: 3000
+        queue-size: 3000        # inbound backpressure gate; over this, a send is rejected (SERVICE_OUT overloaded). ↑ absorbs bursts (more memory), ↓ sheds sooner
         # Group-commit of the inbound persist (plan B). Publisher runs PARALLEL; these coalesce
         # concurrent history+outbox writes into one tx per batch and run several tx concurrently
         # to fill the otherwise ~95%-idle DB pool (keep max-concurrent-batches ≤ DB pool size).
@@ -98,37 +106,63 @@
         max-size: 64
         linger-ms: 10
         max-concurrent-batches: 4
+      # Outbound poller (delivery of the outbox). polling-ms is a Quarkus Duration string ("1000ms"/"1s").
       outbound:
-        batch-size: 1500
-        queue-size: 5000
-        polling-ms: "1000ms"
+        batch-size: 1500        # rows fetched per poll; ↑ higher delivery throughput, ↓ lighter DB reads
+        queue-size: 5000        # outbound backpressure gate
+        polling-ms: "1000ms"    # base poll interval (Duration string)
+      # Adaptive poll-delay regulator: slows the poller under drops, recovers when stable.
       feedback:
-        additional-ms: 1000   # base added poll delay
-        adjustment-factor: 2.0 # growth on drops (>1 → slow down under overload)
-        recovery-factor: 0.5   # decay toward base when stable (<1)
-        max-ms: 30000          # cap on the added delay
+        additional-ms: 1000     # base added poll delay
+        adjustment-factor: 2.0  # growth on drops — MUST be >1 (slow down under overload)
+        recovery-factor: 0.5    # decay toward base when stable — MUST be <1
+        max-ms: 30000           # cap on the added delay (≥ additional-ms)
+      # Delivery retry to a client socket (transient send failures).
       channel:
         retry: true
-        min-backoff-ms: 300
+        min-backoff-ms: 300     # ↑ calmer retries, ↓ faster; keep min ≤ max
         max-backoff-ms: 1000
         max-retries: 3
+      # Per-connection WS flow control (token bucket) — the built-in anti-DoS / anti-flood guard.
       credits:
-        max-value: 100
-        refill-rate-per-s: 10
+        max-value: 100          # burst allowance per connection
+        refill-rate-per-s: 10   # sustained per-connection send rate; aggregate ceiling ≈ connections × this
+      # Outbox GC (watermark/Tetris) sweep cadence (Duration string).
       collector:
-        max-watermarks: 100
         every-s: "10s"
+      # Redis idempotency dedup window (in-progress marker TTL). ≥ typical message processing time.
       idempotent:
         ttl-seconds: 30
+      # Durable store selector. "redis" wires the Redis idempotency/presence/tetris beans; anything else disables them.
       storage:
         service: redis
     attachments:
-      max-size-bytes: 26214400   # 25 MiB cap on a single upload (declared at request + actual at confirm)
-      orphan-age-seconds: 3600   # reclaim a PENDING upload that never confirmed after 1h
-      cleanup-every: 15m
+      max-size-bytes: 26214400   # 25 MiB cap (enforced twice: declared at request + actual object size at confirm)
+      orphan-age-seconds: 3600   # reclaim a PENDING upload that never confirmed after 1h (must exceed minio.upload-ttl-seconds)
+      cleanup-batch: 200         # orphan-reclaim page size per tick; ↑ drains faster (heavier), ↓ gentler
+      cleanup-every: 15m         # orphan-reclaim sweep cadence (Duration string)
       # Allowed content-types (exact, or a "type/*" wildcard). Absent = allow all. Set a whitelist in
       # prod to lock down, e.g.:  allowed-content-types: "image/*,application/pdf,text/plain"
       # (rejected at request with 415).
+
+    # Session reapers (prod). Cadences are Duration strings.
+    session:
+      idle-timeout-ms: 35000        # silent-connection cutoff (missed pings); ↑ tolerates flaky links, ↓ frees phantom-online sooner
+      max-pending: 1000             # per-recipient un-ACKed backlog before force-disconnect (caps the pending ZSET/outbox)
+      overload-kick-batch: 100      # max heavy clients kicked per overload sweep; ↑ clears faster (burstier), ↓ smoother
+      reaper-every: 15s             # liveness (idle) sweep cadence
+      overload-reaper-every: 20s    # overload (backlog) sweep cadence
+
+    # Dead-letter retract sweep (Strategy C, ADR-014).
+    deadletter:
+      cleanup-batch: 500            # confirmed-set drain page size per sweep; ↑ retracts faster (heavier), ↓ gentler
+      cleanup-every: 30s            # sweep cadence (Duration string)
+
+    # History retention sweep (UC-U23, FR-RET-04/05). Two classes: normal history vs longer-lived frozen.
+    retention:
+      history-days: 90              # purge normal history older than this (frozen excluded)
+      frozen-days: 365              # longer TTL for frozen (contract) messages; must be ≥ history-days
+      every: 24h                    # retention sweep cadence (Duration string)
 
   # Inter-service Kafka integration (ADR-007): consume order.events.
   # NB: the default MUST be a resolvable host. An unresolvable bootstrap host fails Kafka-consumer

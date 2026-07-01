@@ -34,7 +34,6 @@
         max-value: 100
         refill-rate-per-s: 10
       collector:
-        max-watermarks: 100
         every-s: "10s"
       idempotent:
         ttl-seconds: 3
