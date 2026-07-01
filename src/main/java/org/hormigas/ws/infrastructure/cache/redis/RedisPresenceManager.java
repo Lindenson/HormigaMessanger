@@ -55,8 +55,12 @@ public class RedisPresenceManager implements PresenceManager {
     void init() {
         valueCommand = redis.value(String.class);
         keyCommands = redis.key();
-        //toDO
-        cleanupAllClients().await().indefinitely();
+        // Cold-start cleanup runs in the BACKGROUND — never block the startup thread on Redis. If Redis
+        // is slow/unreachable at boot the app must still start; stale presence is also reaped by the
+        // liveness/Tetris sweep, so eventual cleanup is enough.
+        cleanupAllClients().subscribe().with(
+                ignored -> log.info("Presence cold-start cleanup complete"),
+                err -> log.error("Presence cold-start cleanup failed (continuing startup)", err));
     }
 
 
@@ -126,21 +130,35 @@ public class RedisPresenceManager implements PresenceManager {
     }
 
 
+    private static final String KEY_PREFIX = "client:";
+    private static final String TS_MARKER = ":timestamp:";
+
+    /** Strip the {@code client:} prefix to the raw id — tolerant of an id that itself contains ':'. */
+    private String idFromKey(String key) {
+        return key.startsWith(KEY_PREFIX) ? key.substring(KEY_PREFIX.length()) : key;
+    }
+
+    /**
+     * Parse a stored presence value {@code name:<name>:timestamp:<ts>}. The name may contain ':', so we
+     * anchor on the {@code :timestamp:} marker (last occurrence) and the trailing numeric ts rather than
+     * a naive {@code split(":")}. Returns null on a malformed value (logged + skipped, never throws).
+     */
     private OnlineClient parseClientData(String key, String value) {
+        String id = idFromKey(key);
         if (value == null) {
-            return new OnlineClient(key, null, 0);
+            return new OnlineClient(id, null, 0);
         }
-        try {
-            String[] parts = key.split(":");
-            String id = parts.length == 2? parts[1] : key;
-            parts = value.split(":");
-            if (parts.length == 4) {
-                String name = parts[1];
-                long timestamp = Long.parseLong(parts[3]);
-                return new OnlineClient(id, name, timestamp);
+        int tsMarker = value.lastIndexOf(TS_MARKER);
+        if (value.startsWith("name:") && tsMarker >= 0) {
+            String name = value.substring("name:".length(), tsMarker);
+            String tsStr = value.substring(tsMarker + TS_MARKER.length());
+            try {
+                return new OnlineClient(id, name, Long.parseLong(tsStr));
+            } catch (NumberFormatException e) {
+                log.error("Error parsing timestamp in presence value {}", value, e);
             }
-        } catch (NumberFormatException e) {
-            log.error("Error parsing value {}", value, e);
+        } else {
+            log.warn("Malformed presence value for {} — skipping: {}", key, value);
         }
         return null;
     }

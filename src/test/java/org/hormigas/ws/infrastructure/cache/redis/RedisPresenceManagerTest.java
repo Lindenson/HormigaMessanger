@@ -127,6 +127,39 @@ public class RedisPresenceManagerTest {
     }
 
     // --------------------------------------------------------
+    // PARSING IS ROBUST TO ':' IN NAME / ID (regression for the fragile split)
+    // --------------------------------------------------------
+
+    @Test
+    public void testNameContainingColonIsParsedIntact() {
+        presence.add("c1", "Alice:Smith:Jr", 100).await().indefinitely();
+
+        List<OnlineClient> all = presence.getAll().await().indefinitely();
+        assertEquals(1, all.size());
+        assertEquals("Alice:Smith:Jr", all.get(0).name(), "a ':' in the name must survive round-trip");
+        assertEquals("c1", all.get(0).id());
+        assertEquals(100, all.get(0).timestamp());
+    }
+
+    @Test
+    public void testIdContainingColonKeepsFullId() {
+        presence.add("tenant:42:cli", "Bob", 200).await().indefinitely();
+
+        List<OnlineClient> all = presence.getAll().await().indefinitely();
+        assertEquals(1, all.size());
+        assertEquals("tenant:42:cli", all.get(0).id(), "the full id (with ':') must be recovered from the key");
+        assertEquals("Bob", all.get(0).name());
+    }
+
+    @Test
+    public void testRemoveStillWorksForNameWithColon() {
+        presence.add("c1", "Alice:Smith", 100).await().indefinitely();
+        presence.remove("c1", 100).await().indefinitely();
+        assertEquals(0, presence.getAll().await().indefinitely().size(),
+                "the Lua remove parses the trailing ts regardless of ':' in the name");
+    }
+
+    // --------------------------------------------------------
     // REMOVE NULL-SAFE
     // --------------------------------------------------------
 
