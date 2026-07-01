@@ -1,8 +1,9 @@
 # Performance
 
 The Messenger is built on two promises: **stay calm under real load**, and **refuse load that would
-hurt it** rather than fall over. This page proves both with three measurements — a realistic crowd, the
-per-connection guard rail, and the raw ceiling — and explains the design choices behind each number.
+hurt it** rather than fall over. This page proves both with four measurements — a realistic crowd, the
+per-connection guard rail, the raw ceiling, and a full-rate HEAD run at ~3,000 msg/s — and explains the
+design choices behind each number.
 
 > **How it's measured.** All runs use the Gatling harness in [`loadtest/`](../loadtest) driving **real
 > WebSockets** — no mocks. Every `CHAT_IN` is confirmed by the server's `SENT` ack, which is emitted
@@ -15,7 +16,7 @@ per-connection guard rail, and the raw ceiling — and explains the design choic
 
 | Lever | What it does | Why it matters |
 |-------|--------------|----------------|
-| **Per-connection credit flow-control** | Each socket gets a token bucket — burst `100`, refill `10/s`. Excess is refused at ingress with an `overloaded` notice (the client retries). | No single client can flood the server. Aggregate capacity scales with the number of connections, not with any one client's rate. **This guard rail is load-bearing** (see below). |
+| **Per-connection credit flow-control** | Each socket gets a token bucket — burst `1000`, refill `100/s`. Excess is refused at ingress with an `overloaded` notice (the client retries). | No single client can flood the server. Aggregate capacity scales with the number of connections, not with any one client's rate. **This guard rail is load-bearing** (see below). |
 | **Group-commit persistence** | The parallel inbound pipeline coalesces many `history+outbox` writes into one transaction (`InboundPersistBatcher`), several in flight at once. | Thousands of messages/second on a modest 20-connection DB pool. |
 | **Ack-after-commit** | `SENT` is sent only after the DB transaction commits. | An acknowledged message is always durable — never lost across a disconnect. |
 | **Bounded JVM** | `-Xmx2g` + capped direct/metaspace/code-cache + `MALLOC_ARENA_MAX=2`. | Flat, small, predictable memory; virtual-address reservation collapses from tens of GB to ~3.3 GB. |
@@ -64,6 +65,10 @@ xychart-beta
 ---
 
 ## 2. The guard rail — per-connection flow control
+
+> *Measured at the prior credit default (burst `100`, refill `10/s`). The current default is `1000` /
+> `100/s` — the mechanism below is unchanged, only the per-connection ceiling is 10× higher. See §4 for a
+> HEAD run at the current default.*
 
 Throughput scales with the number of connections, **not** with any single client's send rate, because
 each connection is metered by a credit bucket (burst `100`, refill `10/s`). To see it work, we put
@@ -144,6 +149,10 @@ than failing. (3) The persist pipeline's own ceiling is comfortably **above 3,00
 
 ## 3. Peak capacity — ~3,000 messages/second
 
+> *Measured at the prior refill default (`10/s`), so the ceiling was reached with ~300 paced
+> connections. At the current `100/s` default the same ceiling is reached with far fewer connections
+> (§4). The scaling law — **rate ≈ connections × refill** — is identical.*
+
 The ceiling, measured the way the guard rail intends it to be reached: **many paced connections, each
 within its credit budget** (≈300 chat pairs, each awaiting its ack before the next send — i.e. ≤ the
 `10/s` refill). Sustained for minutes, flat, with **no message loss and no full GC**:
@@ -162,6 +171,56 @@ connections (or raise the refill), not the per-client rate.
 
 Putting the three together: a thousand real users chatting (≈120 msg/s of demand) is a **fraction** of
 the ~3,000 msg/s ceiling — the system runs that load nearly idle.
+
+---
+
+## 4. Full-rate HEAD run — ~3,000 msg/s ingest with the gate lifted
+
+The runs above reach ~3,000 msg/s by *summing many credit-limited connections*. This one reaches the same
+rate the other way — **few connections, each allowed to push hard** — to isolate the persist engine's own
+ceiling from the credit gate. Credits were raised to the current default (burst `1000`, refill `100/s`),
+then the planned wave stress was replayed: **1,170 online**, ~30 rotating senders firing ~100 msg/s at
+random peers, in **three waves (50 % → 100 % → 75 %)** over ~8.5 min. Every `CHAT_IN` is still
+ack-after-commit, so a counted row is a persisted row.
+
+| Signal — 1,170 online, 3 waves, credits `1000`/`100` | Observed |
+|------------------------------------------------------|----------|
+| Offered (WS sends) | **924,800** |
+| **Persisted to DB** | **924,761 — 99.996 %** |
+| Credits exhausted | **0** |
+| Inbound-queue drops / persist failures / dead-letter | **0 / 0 / 0** |
+| Errors (KO) | **0** of 932,906 ops |
+| Send→`SENT` latency | p50/p95 **0 ms**, p99 **1 ms**, max **162 ms** |
+| **Peak persist (30 s window)** | **~2,997 msg/s** (3,391 msg/s instantaneous) |
+| Per-wave persist (50/100/75 %) | **~1,200 / ~3,000 / ~2,400 msg/s** — clean wave shape |
+| RSS across the run | **490 → ~990 MB, peak 1,025 MB**, then flat (no leak) |
+
+```
+msg/s 3000 ┤                    ╭──────────────╮
+      2400 ┤                    │   (100%)     ╰──────────────╮
+      1800 ┤                    │                  (75%)      │
+      1200 ┤────────────────────╯                            │
+       600 ┤  (50%)                                          │
+           └──┴────┴────┴────┴────┴────┴────┴────┴────┴────┴─
+             0        100       200       300       400   seconds
+```
+
+The engine tracked the offered profile exactly and persisted **everything** it was given — the credit
+gate, once lifted, is not the limiter; the persist path comfortably sustains the full 3,000 msg/s.
+
+**The honest finding: delivery is the next ceiling.** With persistence running 3× faster than in §2, the
+outbox poller — which competes with the persist batchers for the same DB pool — kept up with only part of
+the flow in real time (**~92 k live-delivered** during the run). The rest is not lost: it sits **durably
+in the `outbox`** and is delivered by store-and-forward on the recipient's next poll/reconnect (the
+`ack-after-commit` guarantee). Raising ingest exposed the **delivery poller as the next optimization
+target** — separating persist and delivery onto distinct pools / priorities is the path to lifting the
+*delivered* rate to match the *persisted* rate.
+
+> Two caveats, stated plainly. (1) This run used the **raw `java -jar`** without the deployment's memory
+> bounds (§[Memory](#memory)), so VIRT sat at the JVM default (~24–33 GB reservation) and RSS at ~1 GB;
+> the bounded flags bring both down as shown below at no throughput cost. (2) Single-host: the co-located
+> load generator holds all 1,170 sockets *and* the ~3,000 msg/s fan-out, so it — not the server — is the
+> practical limit on live delivery; off-box load generation removes this.
 
 ---
 
@@ -205,8 +264,8 @@ Configurable under `processing.messages` (env-overridable, `prod` profile):
 
 | Param | Default | Effect |
 |-------|---------|--------|
-| `credits.max-value` | `100` | Per-connection burst allowance. |
-| `credits.refill-rate-per-s` | `10` | Per-connection sustained rate. **Aggregate ceiling ≈ connections × this.** Raising it weakens the abuse guard — change with care. |
+| `credits.max-value` | `1000` | Per-connection burst allowance. |
+| `credits.refill-rate-per-s` | `100` | Per-connection sustained rate. **Aggregate ceiling ≈ connections × this.** Raising it weakens the abuse guard — change with care. |
 | `inbound.persist-batch.max-size` | `64` | Messages per transaction. Higher → fewer commits, higher ceiling. |
 | `inbound.persist-batch.linger-ms` | `5` | How long a partial batch waits before flushing. The only latency batching adds. |
 | `inbound.persist-batch.max-concurrent-batches` | `8` | Batch transactions in flight. **Keep ≤ the DB pool size.** |
